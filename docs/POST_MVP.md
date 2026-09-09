@@ -9,7 +9,7 @@ we emit for MrDrums (verified on device), so no schema change is needed there.
 
 ---
 
-## Batch A — small wins (JS + tiny DSP)  ·  *next*
+## Batch A — small wins (JS + tiny DSP)  ·  **done** (v0.2.0)
 
 ### A1. Per-pad gain trim  ·  small
 KIT-page **Knob 5** (spec §13.3 "Gain", reserved) trims the selected pad's
@@ -28,15 +28,17 @@ Assign changes only that pad; locked pad is untouched.
 
 ---
 
-## Batch B — sources  ·  *after A*
+## Batch B — sources  ·  **done** (v0.2.0)
 
-### B1. Core Library as a source  ·  medium
-`Source` enum becomes **User / Core / Both** (Knob 2, §13.2). The indexer
-scans `/data/CoreLibrary/Samples` as well (`path_mapping.mjs` core→`ableton:/
-packs/abl-core-library/` mapping is already in place); index records carry
-`source`. `assignKit` filters candidates by the selected source (it already
-takes a `source` arg). SYSTEM page shows counts per source or a combined total.
-Bigger index — keep the chunked scan.
+### B1. Core Library as a source  ·  medium  ·  *shipped*
+`Source` enum is **User / Core / Both** (RANDOM page Knob 2, §13.2). The
+chunked scan now walks every library root that exists in one pass and tags each
+record with `source`; the cached index stores `sample_roots` +
+`counts_by_source`. `assignKit` / `rerollPad` filter by the selected source
+(`bucketByRole`), `both` unions. RANDOM + SYSTEM pages show the mode;
+`summarizeRecords()` recomputes SYSTEM category counts for it. MrDrums export
+gained the `ableton:/packs/abl-core-library/` scheme so Core pads resolve.
+Source resets to User on `New`/launch, survives a Back-park.
 
 **Test B:** Source toggle changes which samples Assign draws; Core-only and
 Both work; index rebuild covers both roots without stalling.

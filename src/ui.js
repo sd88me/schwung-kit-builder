@@ -78,7 +78,7 @@ import {
 } from '/data/UserData/schwung/shared/input_filter.mjs';
 
 import {
-    loadConfig, loadIndex, createScan, summarize
+    loadConfig, loadIndex, createScan, summarize, summarizeRecords
 } from './core/sample_index.mjs';
 
 import {
@@ -154,6 +154,7 @@ const ARM_TICKS = 390;         // ~9 s confirm window for New
 
 /* Knob CCs used as encoder controls in this overtake shell. */
 const KNOB_PAD_SELECT = MoveKnob1;   // 71 — KIT page: Selected Pad (§13.3 encoder 1)
+const KNOB_SOURCE = MoveKnob1 + 1;   // 72 — knob 2 — RANDOM: Source (§13.2 encoder 2)
 const KNOB_DUPLICATES = 73;          // knob 3 — RANDOM: Duplicates (§13.2 encoder 3)
 const KNOB_GAIN = MoveKnob1 + 4;     // 75 — knob 5 — KIT page: per-pad Gain (§13.3)
 const GAIN_STEP = 0.04;
@@ -179,7 +180,9 @@ let pageIndex = 0;
 let selectedPad = 0;       // 0-based, KIT page "Selected Pad"
 let randomSel = 0;         // 0-based index into RANDOM_ACTIONS
 let preventDuplicates = true;
-const sourceMode = 'user'; // §13.2 Source — User Library only in the MVP
+const SOURCE_MODES = ['user', 'core', 'both'];      // §13.2 Source enum
+const SOURCE_LABEL = { user: 'User', core: 'Core', both: 'Both' };
+let sourceMode = 'user';
 
 let assignHeld = false;         // jog-press currently down
 let assignInFlight = 0;         // >0 while an Assign is settling (reentrancy guard)
@@ -595,7 +598,11 @@ function relativeAge(iso) {
 }
 
 function refreshIndexView() {
-    indexSummary = summarize(indexInfo && indexInfo.counts);
+    if (indexInfo && Array.isArray(indexInfo.records)) {
+        indexSummary = summarizeRecords(indexInfo.records, sourceMode);   // source-filtered
+    } else {
+        indexSummary = summarize(indexInfo && indexInfo.counts);
+    }
     indexAgeText = relativeAge(indexInfo && indexInfo.generated_at);
 }
 
@@ -779,6 +786,23 @@ globalThis.onMidiMessageInternal = function (data) {
                 return;
             }
 
+            case KNOB_SOURCE: {
+                /* RANDOM page: Source enum — cycles User -> Core -> User+Core (§13.2). */
+                if (PAGES[pageIndex] !== 'RANDOM') return;
+                const delta = decodeDelta(d2);
+                if (delta === 0) return;
+                const dir = delta > 0 ? 1 : -1;
+                const at = SOURCE_MODES.indexOf(sourceMode);
+                const nextMode = SOURCE_MODES[(at + dir + SOURCE_MODES.length) % SOURCE_MODES.length];
+                if (nextMode !== sourceMode) {
+                    sourceMode = nextMode;
+                    refreshIndexView();   // SYSTEM counts follow the chosen Source
+                    footer = `Source: ${SOURCE_LABEL[sourceMode]}`;
+                    needsRedraw = true;
+                }
+                return;
+            }
+
             case KNOB_PAD_SELECT: {
                 /* KIT page: Selected Pad 1..16 (spec §13.3 encoder 1). */
                 if (PAGES[pageIndex] !== 'KIT') return;
@@ -895,10 +919,11 @@ function drawRandomPage() {
         }
     }
     const rx = 70;
-    line(rx, 13, `Dup ${preventDuplicates ? 'Avoid' : 'Allow'}`);
-    line(rx, 22, `Asn ${assignedCount()}/16`);
-    line(rx, 31, `Lck ${lockedCount()}/16`);
-    line(rx, CONTENT_BOTTOM, currentKitName || '(unsaved)');
+    line(rx, 12, `Dup ${preventDuplicates ? 'Avoid' : 'Allow'}`);
+    line(rx, 20, `Src ${SOURCE_LABEL[sourceMode]}`);
+    line(rx, 28, `Asn ${assignedCount()}/16`);
+    line(rx, 36, `Lck ${lockedCount()}/16`);
+    line(rx, 44, currentKitName || '(unsaved)');
 }
 
 function drawKitPage() {
@@ -927,7 +952,8 @@ function drawSystemPage() {
     const scanning = !!scan;
     const cx = 74;
     button(MX, 13, 50, 12, scanning ? 'SCAN' : 'RESCAN', assignHeld && !scanning);
-    line(MX + 56, 15, `Age ${indexAgeText}`);
+    line(MX + 56, 13, `Age ${indexAgeText}`);
+    line(MX + 56, 22, `Src ${SOURCE_LABEL[sourceMode]}`);
     line(MX, 30, `Indexed ${s.indexed}`);  line(cx, 30, `Oth ${s.other}`);
     line(MX, 39, `Kick ${s.kick}`);        line(cx, 39, `Snr ${s.snare}`);
     line(MX, 48, `Clap ${s.clap}`);        line(cx, 48, `Hat ${s.hats}`);
@@ -956,6 +982,7 @@ globalThis.init = function () {
     selectedPad = 0;
     randomSel = 0;
     preventDuplicates = true;
+    sourceMode = 'user';
     assignHeld = false;
     assignInFlight = 0;
     assignFireCount = 0;

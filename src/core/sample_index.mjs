@@ -112,27 +112,41 @@ function readdirOf(path) {
  */
 export function createScan(config) {
     const cfg = config || DEFAULT_CONFIG;
-    const root = (cfg.sample_roots && cfg.sample_roots.user) || DEFAULT_CONFIG.sample_roots.user;
-    const rootPrefix = root.replace(/\/+$/, '');
+    const sr = cfg.sample_roots || DEFAULT_CONFIG.sample_roots;
     const exts = (cfg.supported_extensions || []).map((e) => String(e).toLowerCase());
     const aliasIndex = buildAliasIndex(cfg.role_rules);
 
-    const rootStat = statOf(rootPrefix);
-    const rootOk = isDirStat(rootStat);
+    /* Index BOTH libraries that exist on disk; assignKit filters by the
+     * user's chosen Source at pick time. */
+    const roots = [];
+    for (const [path, src] of [[sr.user, 'user'], [sr.core, 'core']]) {
+        if (!path) continue;
+        const prefix = String(path).replace(/\/+$/, '');
+        if (isDirStat(statOf(prefix))) roots.push({ prefix, source: src });
+    }
 
     const state = {
-        phase: rootOk ? 'scanning' : 'error',
-        error: rootOk ? null : 'no_root',
-        root: rootPrefix,
-        stack: rootOk ? [rootPrefix] : [],
+        phase: roots.length ? 'scanning' : 'error',
+        error: roots.length ? null : 'no_root',
+        roots,
+        root: roots.length ? roots[0].prefix : '',
+        stack: roots.map((r) => r.prefix),
         records: [],
         counts: emptyCounts(),
+        countsBySource: { user: 0, core: 0 },
         dirsVisited: 0,
         filesSeen: 0,
         indexPath: null,
         startedMs: Date.now(),
         finishedMs: 0
     };
+
+    function rootFor(full) {
+        for (const r of state.roots) {
+            if (full === r.prefix || full.startsWith(r.prefix + '/')) return r;
+        }
+        return null;
+    }
 
     function step(budget) {
         if (state.phase !== 'scanning') return state.phase;
@@ -159,7 +173,9 @@ export function createScan(config) {
                 const ext = dot >= 0 ? lower.slice(dot) : '';
                 if (exts.indexOf(ext) === -1) continue;
 
-                const rel = full.slice(rootPrefix.length + 1);
+                const root = rootFor(full);
+                if (!root) continue;
+                const rel = full.slice(root.prefix.length + 1);
                 const parts = rel.split('/');
                 const dirParts = parts.slice(0, -1);
                 const role = classify(dirParts, aliasIndex);
@@ -168,7 +184,7 @@ export function createScan(config) {
                 state.records.push({
                     filesystem_path: full,
                     ableton_uri: mapped.error ? null : mapped.uri,
-                    source: mapped.source || 'user',
+                    source: mapped.source || root.source,
                     category: role,
                     filename: name,
                     extension: ext,
@@ -176,6 +192,7 @@ export function createScan(config) {
                     modified_time: st.mtime ? Math.floor(st.mtime / 1000) : 0
                 });
                 state.counts[role] = (state.counts[role] || 0) + 1;
+                state.countsBySource[root.source] = (state.countsBySource[root.source] || 0) + 1;
             }
         }
         if (!state.stack.length) {
@@ -207,8 +224,8 @@ function writeIndex(state, cfg) {
     const payload = {
         schema_version: 1,
         generated_at: new Date().toISOString(),
-        sample_root: state.root,
-        source: 'user',
+        sample_roots: (state.roots || []).map((r) => r.prefix),
+        counts_by_source: state.countsBySource || { user: state.records.length, core: 0 },
         count: state.records.length,
         counts: state.counts,
         records: state.records
@@ -262,4 +279,19 @@ export function summarize(counts) {
         fx: c.fx || 0,
         other: c.other || 0
     };
+}
+
+/* Category summary limited to one source ('user' | 'core' | 'both'). Recomputed
+ * from records so the SYSTEM page reflects the chosen Source. */
+export function summarizeRecords(records, source) {
+    const c = emptyCounts();
+    let user = 0, core = 0;
+    for (const r of records || []) {
+        if (r.source === 'core') core++; else user++;
+        if (source && source !== 'both' && r.source && r.source !== source) continue;
+        c[r.category] = (c[r.category] || 0) + 1;
+    }
+    const s = summarize(c);
+    s.bySource = { user, core };
+    return s;
 }

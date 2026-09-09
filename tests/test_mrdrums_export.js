@@ -82,6 +82,26 @@ export const tests = [
         assert(cells[0].deviceData.sampleUri.indexOf('ableton:/user-library/') === 0);
     }},
 
+    { name: 'core-library samples round-trip through the abl-core-library scheme', fn() {
+        const kit = createKit(DEFAULT_CONFIG);
+        kit.pads[0].sample = sampleFromRecord({
+            filesystem_path: '/data/CoreLibrary/Samples/Drums/Kick/Deep Kick.wav',
+            ableton_uri: 'ableton:/packs/abl-core-library/Samples/Drums/Kick/Deep Kick.wav',
+            source: 'core', category: 'kick', filename: 'Deep Kick.wav', extension: '.wav'
+        });
+        kit.pads[1].sample = sampleFromRecord({
+            filesystem_path: '/data/CoreLibrary/Samples/Drums/Snare/Tight Snare.wav',
+            ableton_uri: null, source: 'core', category: 'snare', filename: 'Tight Snare.wav', extension: '.wav'
+        });
+        const { doc, padCount } = buildMrDrumsPreset(kit);
+        eq(padCount, 2);
+        const cells = doc.chains[0].devices[0].chains.map((c) => c.devices[0]);
+        assert(cells[0].deviceData.sampleUri.indexOf('ableton:/packs/abl-core-library/') === 0);
+        eq(mrdrumsResolve(cells[0].deviceData.sampleUri), '/data/CoreLibrary/Samples/Drums/Kick/Deep Kick.wav');
+        // resolved from filesystem_path when no ableton_uri was recorded
+        eq(mrdrumsResolve(cells[1].deviceData.sampleUri), '/data/CoreLibrary/Samples/Drums/Snare/Tight Snare.wav');
+    }},
+
     { name: 'gain -> Volume dB uses MrDrums unity reference (-12 dB = 1.0)', fn() {
         eq(gainToDb(1.0), -12.0);
         assert(Math.abs(mrdrumsDbToGain(gainToDb(1.0)) - 1.0) < 1e-6);

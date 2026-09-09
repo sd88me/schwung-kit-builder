@@ -22,6 +22,25 @@ Post-MVP work — see [`docs/POST_MVP.md`](docs/POST_MVP.md) for the batch plan.
 - Tests: `test_assignment.js` +3 cases (reroll changes one pad, refuses a
   locked pad, rejects/favourites weighting).
 
+### Batch B — Core Library as source
+
+- **Source selector** (spec §13.2). RANDOM page **Knob 2** cycles the sample
+  source: **User** (`/data/UserData/UserLibrary/Samples`), **Core**
+  (`/data/CoreLibrary/Samples`), or **Both**. Shown on the RANDOM and SYSTEM
+  pages; resets to User on a fresh `New`/launch, preserved across a Back-park.
+- `sample_index.createScan` now walks **every library root that exists** in one
+  pass, tagging each record with its `source`. The cached index stores
+  `sample_roots` + `counts_by_source`; `summarizeRecords(records, source)`
+  recomputes the SYSTEM-page category counts for the chosen source.
+- `assignKit` / `rerollPad` already filtered candidates by `source`
+  (`bucketByRole`), so the selector just feeds them the mode. `both` draws from
+  the union.
+- MrDrums export learned the **`ableton:/packs/abl-core-library/`** scheme so
+  Core-library pads resolve on load (from `ableton_uri` or, failing that, a
+  `/data/CoreLibrary/` filesystem path).
+- Tests: `test_assignment.js` +1 (source filter restricts / unions picks);
+  `test_mrdrums_export.js` +1 (core samples round-trip through MrDrums).
+
 ## [0.1.0] — unreleased
 
 ### Stage 1 — hardware shell (spec §23)

@@ -31,6 +31,24 @@ const FULL = fakeIndex({
     percussion: 30, fx: 10, other: 200
 });
 
+/* An index whose records carry a mix of user/core sources. */
+function mixedIndex() {
+    const roles = ['kick', 'snare', 'clap', 'open_hat', 'closed_hat', 'percussion', 'fx', 'other'];
+    const records = [];
+    for (const src of ['user', 'core']) {
+        for (const cat of roles) {
+            for (let i = 1; i <= 6; i++) {
+                records.push({
+                    filesystem_path: `/${src}/${cat}/${cat}_${i}.wav`,
+                    ableton_uri: null, source: src, category: cat,
+                    filename: `${cat}_${i}.wav`, extension: '.wav', size_bytes: 1000, modified_time: 0
+                });
+            }
+        }
+    }
+    return { records };
+}
+
 function run(kit, index, over) {
     return assignKit(Object.assign({
         kit, index, config: DEFAULT_CONFIG, seed: 12345,
@@ -158,6 +176,26 @@ export const tests = [
         const r = rerollPad({ kit, index: FULL, config: DEFAULT_CONFIG, seed: 1, source: 'user', preventDuplicates: true, padIndex: 3 });
         eq(r.changed, false);
         assert((r.warning || '').includes('locked'));
+    }},
+
+    { name: 'source filter restricts picks to the chosen library (§10.1)', fn() {
+        const idx = mixedIndex();
+        const u = run(createKit(DEFAULT_CONFIG), idx, { source: 'user' });
+        for (const p of u.pads) assert(p.sample.filesystem_path.startsWith('/user/'), `user-only picked ${p.sample.filesystem_path}`);
+
+        const c = run(createKit(DEFAULT_CONFIG), idx, { source: 'core' });
+        for (const p of c.pads) assert(p.sample.filesystem_path.startsWith('/core/'), `core-only picked ${p.sample.filesystem_path}`);
+
+        // 'both' draws from the union — over many seeds it must use each source at least once
+        let sawUser = false, sawCore = false;
+        for (let s = 1; s <= 30; s++) {
+            const b = run(createKit(DEFAULT_CONFIG), idx, { source: 'both', seed: s * 17 + 3 });
+            for (const p of b.pads) {
+                if (p.sample.filesystem_path.startsWith('/user/')) sawUser = true;
+                if (p.sample.filesystem_path.startsWith('/core/')) sawCore = true;
+            }
+        }
+        assert(sawUser && sawCore, `'both' should mix sources (user=${sawUser} core=${sawCore})`);
     }},
 
     { name: 'rejects are never chosen; favourites come up more often', fn() {

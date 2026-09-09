@@ -26,6 +26,8 @@
 const SCHEMA = 'http://tech.ableton.com/schema/song/1.8.2/devicePreset.json';
 const USER_URI_PREFIX = 'ableton:/user-library/';
 const USER_FS_PREFIX = '/data/UserData/UserLibrary/';
+const CORE_URI_PREFIX = 'ableton:/packs/abl-core-library/';
+const CORE_FS_PREFIX = '/data/CoreLibrary/';
 const AUDIO_EXT = ['.wav', '.aif', '.aiff'];
 
 function hasAudioExt(p) {
@@ -43,9 +45,15 @@ export function sampleUriFor(sample) {
     if (sample.ableton_uri && sample.ableton_uri.indexOf(USER_URI_PREFIX) === 0) {
         return USER_URI_PREFIX + encodePath(sample.ableton_uri.slice(USER_URI_PREFIX.length));
     }
+    if (sample.ableton_uri && sample.ableton_uri.indexOf(CORE_URI_PREFIX) === 0) {
+        return CORE_URI_PREFIX + encodePath(sample.ableton_uri.slice(CORE_URI_PREFIX.length));
+    }
     const fs = sample.filesystem_path || '';
     if (fs.indexOf(USER_FS_PREFIX) === 0) {
         return USER_URI_PREFIX + encodePath(fs.slice(USER_FS_PREFIX.length));
+    }
+    if (fs.indexOf(CORE_FS_PREFIX) === 0) {
+        return CORE_URI_PREFIX + encodePath(fs.slice(CORE_FS_PREFIX.length));
     }
     if (fs.charAt(0) === '/') {
         return '/' + fs.split('/').filter((s) => s.length > 0).map(encodeURIComponent).join('/');
