@@ -715,7 +715,6 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (delta !== 0) {
                     const dir = delta > 0 ? 1 : -1;
                     pageIndex = (pageIndex + dir + PAGES.length) % PAGES.length;
-                    footer = '';   // status line is per-moment, not carried across pages
                     needsRedraw = true;
                 }
                 return;
@@ -824,10 +823,11 @@ function drawHeader() {
     fill_rect(0, 11, SCREEN_W, 1, 1);
 }
 
-/* Content rows live in y = 13..CONTENT_BOTTOM; the footer separator is at
- * y=52 and footer text at y=54, so a glyph (~8 px) must start no lower than
- * this or it bleeds into the footer. */
+/* The footer status line (separator y=52, text y=54) is drawn only on the
+ * RANDOM page, where transient action results belong. Pages that keep it must
+ * end their content by CONTENT_BOTTOM; footer-less pages get FULL_BOTTOM. */
 const CONTENT_BOTTOM = 44;
+const FULL_BOTTOM = 56;
 
 function drawFooter() {
     fill_rect(0, 52, SCREEN_W, 1, 1);
@@ -855,34 +855,47 @@ function drawRandomPage() {
 }
 
 function drawKitPage() {
+    /* No footer here — the pad line would just duplicate what the page shows.
+     * The freed rows carry the sample name in full and its load state. */
     const p = kit.pads[selectedPad];
     line(MX, 14, `Pad ${p.pad}   note ${p.midi_note}`);
-    line(MX, 24, `Role   ${p.role}`);
-    line(MX, 34, `Sample ${p.sample ? shortName(p.sample.filename, 14) : '-'}`);
-    line(MX, CONTENT_BOTTOM, `Lock   ${p.locked ? 'yes' : 'no'}`);
+    line(MX, 23, `Lock   ${p.locked ? 'yes' : 'no'}`);
+    line(MX, 32, `Role   ${p.role}`);
+    if (p.sample) {
+        const cat = p.sample.category;
+        line(MX, 41, cat && cat !== p.role ? `Drawn from  ${cat}` : `Category    ${cat || p.role}`);
+        line(MX, 49, p.sample.filename);                     // full width, auto-clamped
+        const st = slotStat.charAt(selectedPad);
+        line(MX, FULL_BOTTOM, st === 'm' ? 'file missing'
+            : st === 'x' ? 'decode error'
+            : st === '.' ? 'loading' : 'loaded');
+    } else {
+        line(MX, 41, 'Sample  -  (empty pad)');
+        line(MX, 49, 'Assign on the RANDOM page');
+    }
 }
 
 function drawSystemPage() {
+    /* No footer here either — the whole area is the index report. */
     const s = indexSummary;
     const scanning = !!scan;
-    /* Rescan button top-left, index age beside it, then the §13.4 summary
-     * (Indexed / Kicks / Snares / Hats / Other). */
+    const cx = 74;
     button(MX, 13, 50, 12, scanning ? 'SCAN' : 'RESCAN', assignHeld && !scanning);
     line(MX + 56, 15, `Age ${indexAgeText}`);
-    line(MX, 27, `Indexed ${s.indexed}`);
-    line(MX, 36, `Kicks ${s.kick}   Snares ${s.snare}`);
-    line(MX, CONTENT_BOTTOM, `Hats ${s.hats}   Other ${s.other}`);
+    line(MX, 30, `Indexed ${s.indexed}`);  line(cx, 30, `Oth ${s.other}`);
+    line(MX, 39, `Kick ${s.kick}`);        line(cx, 39, `Snr ${s.snare}`);
+    line(MX, 48, `Clap ${s.clap}`);        line(cx, 48, `Hat ${s.hats}`);
+    line(MX, FULL_BOTTOM, `Perc ${s.perc}`); line(cx, FULL_BOTTOM, `FX ${s.fx}`);
 }
 
 function drawUI() {
     clear_screen();
     drawHeader();
     switch (PAGES[pageIndex]) {
-        case 'RANDOM': drawRandomPage(); break;
+        case 'RANDOM': drawRandomPage(); drawFooter(); break;   // footer: RANDOM only
         case 'KIT':    drawKitPage();    break;
         case 'SYSTEM': drawSystemPage(); break;
     }
-    drawFooter();
 }
 
 /* ------------------------------------------------------------------ *

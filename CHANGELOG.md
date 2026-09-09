@@ -243,14 +243,18 @@ verifiable only on device (load MrDrums, browse to the export).
 Move — verified by wiping `overtake/kit-builder/` and extracting the versioned
 tarball fresh.
 
-### Post-packaging fixes
+### Post-packaging display fixes
 
-- Display: KIT and SYSTEM page content no longer bleeds into the footer — all
-  pages now keep their bottom row at `CONTENT_BOTTOM` (y=44), clear of the
-  footer separator (y=52). SYSTEM trimmed to the §13.4 figures
-  (Indexed / Kicks / Snares / Hats / Other + Age). The footer status line is
-  cleared on a page change so a message like "Pad 5: …" no longer lingers on
-  another page.
+- The footer status line is now **RANDOM-page only** — on KIT and SYSTEM it just
+  duplicated on-page data, so it's gone and those pages use the full height.
+- **KIT** page uses the freed rows: selected pad + note, lock, role, the
+  sample's category (flagged when a fallback role was used), the full filename,
+  and the DSP load state (loaded / loading / file missing / decode error).
+- **SYSTEM** page shows the Rescan button + index age, then a two-column count
+  grid (Indexed / Other, Kick / Snare, Clap / Hat, Perc / FX).
+- Content on every page stays within its bound (`CONTENT_BOTTOM` y=44 for the
+  footered RANDOM page, `FULL_BOTTOM` y=56 for the others) so nothing bleeds
+  past the panel edge.
 
 ---
 
