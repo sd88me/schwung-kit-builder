@@ -3,7 +3,7 @@
  */
 import { assert, eq } from './run.js';
 import { createKit } from '../src/core/kit_model.mjs';
-import { assignKit } from '../src/core/random_assign.mjs';
+import { assignKit, rerollPad } from '../src/core/random_assign.mjs';
 import { DEFAULT_CONFIG } from '../src/core/sample_index.mjs';
 
 /* Build a fake index with `n` samples in each named category. */
@@ -131,5 +131,47 @@ export const tests = [
         assert(res.relaxed.length > 0, 'expected duplicate relaxation on the Other pads');
         // every other pad still ends up assigned
         for (let i = 7; i < 16; i++) assert(res.pads[i].sample, `pad ${i + 1} should be assigned`);
+    }},
+
+    { name: 'rerollPad changes one unlocked pad and avoids kit duplicates + current', fn() {
+        const kit = createKit(DEFAULT_CONFIG);
+        let cur = run(kit, FULL);
+        for (let i = 0; i < 16; i++) kit.pads[i] = cur.pads[i];
+        const before = kit.pads.map((p) => p.sample.filesystem_path);
+        const kickBefore = kit.pads[0].sample.filesystem_path;
+
+        const r = rerollPad({ kit, index: FULL, config: DEFAULT_CONFIG, seed: 55, source: 'user', preventDuplicates: true, padIndex: 0 });
+        assert(r.changed, 'pad 0 should change');
+        eq(r.pad.sample.category, 'kick');
+        assert(r.pad.sample.filesystem_path !== kickBefore, 'must not reselect the current sample');
+        // not equal to any OTHER pad's sample
+        for (let i = 1; i < 16; i++) assert(r.pad.sample.filesystem_path !== before[i], `collides with pad ${i + 1}`);
+        // the rest of the kit is untouched (rerollPad does not mutate)
+        eq(kit.pads.map((p) => p.sample.filesystem_path), before);
+    }},
+
+    { name: 'rerollPad refuses a locked pad', fn() {
+        const kit = createKit(DEFAULT_CONFIG);
+        let cur = run(kit, FULL);
+        for (let i = 0; i < 16; i++) kit.pads[i] = cur.pads[i];
+        kit.pads[3].locked = true;
+        const r = rerollPad({ kit, index: FULL, config: DEFAULT_CONFIG, seed: 1, source: 'user', preventDuplicates: true, padIndex: 3 });
+        eq(r.changed, false);
+        assert((r.warning || '').includes('locked'));
+    }},
+
+    { name: 'rejects are never chosen; favourites come up more often', fn() {
+        const idx = fakeIndex({ kick: 6, snare: 6, clap: 6, open_hat: 6, closed_hat: 6, percussion: 6, fx: 6, other: 6 });
+        const rejects = new Set(['/lib/kick/kick_1.wav', '/lib/kick/kick_2.wav', '/lib/kick/kick_3.wav']);
+        const favourites = new Set(['/lib/kick/kick_6.wav']);
+        let favHits = 0;
+        for (let s = 1; s <= 120; s++) {
+            const res = assignKit({ kit: createKit(DEFAULT_CONFIG), index: idx, config: DEFAULT_CONFIG, seed: s * 13 + 1, source: 'user', preventDuplicates: true, rejects, favourites });
+            const k = res.pads[0].sample.filesystem_path;
+            assert(!rejects.has(k), `rejected sample ${k} was assigned`);
+            if (k === '/lib/kick/kick_6.wav') favHits++;
+        }
+        // 3 eligible non-fav (4,5) + fav weighted x2 => fav ~ 2/4 of picks; certainly > 1/3
+        assert(favHits > 40, `favourite only came up ${favHits}/120 times`);
     }}
 ];

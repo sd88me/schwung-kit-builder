@@ -2,6 +2,26 @@
 
 All notable changes to Kit Builder are recorded here.
 
+## [0.2.0] — unreleased
+
+Post-MVP work — see [`docs/POST_MVP.md`](docs/POST_MVP.md) for the batch plan.
+
+### Batch A — small wins
+
+- **Per-pad gain trim** (spec §13.3). KIT page **Knob 5** trims the selected
+  pad's `playback.gain` (0.0–2.0, 1.0 = 0 dB); shown on the page as dB. The DSP
+  gained a `slot_gain_<N>` param and multiplies it into the voice level; `Clear`
+  / `New` reset it to unity. The MrDrums export already carries `playback.gain`
+  as `Volume` dB, so trims travel with the kit.
+- **Re-roll one pad.** Hold a pad and fire **Assign** to re-roll just that pad
+  from its role pool (duplicate- and current-sample-avoided), leaving the rest
+  of the kit untouched. `random_assign.mjs` factored into a shared `resolveOne`
+  used by both `assignKit` and the new `rerollPad`.
+- `random_assign.resolveOne` also takes optional `rejects` / `favourites` sets
+  (wired for Batch C; no behaviour change until passed).
+- Tests: `test_assignment.js` +3 cases (reroll changes one pad, refuses a
+  locked pad, rejects/favourites weighting).
+
 ## [0.1.0] — unreleased
 
 ### Stage 1 — hardware shell (spec §23)

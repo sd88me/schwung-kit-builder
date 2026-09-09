@@ -83,6 +83,7 @@ typedef struct {
     char     module_dir[256];
     slot_t   slots[NSLOTS];
     voice_t  voices[NSLOTS];
+    float    slot_gain[NSLOTS]; /* per-pad makeup gain, 0..2 (1 = 0 dB) */
     pthread_t loader;
     volatile int loader_run;
     volatile int ready;
@@ -401,7 +402,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     if (module_dir) {
         strncpy(k->module_dir, module_dir, sizeof(k->module_dir) - 1);
     }
-    for (int i = 0; i < NSLOTS; i++) k->slots[i].status = ST_EMPTY;
+    for (int i = 0; i < NSLOTS; i++) { k->slots[i].status = ST_EMPTY; k->slot_gain[i] = 1.0f; }
     k->loader_run = 1;
     if (pthread_create(&k->loader, NULL, loader_main, k) != 0) {
         free(k);
@@ -443,7 +444,7 @@ static void on_midi(void *inst, const uint8_t *msg, int len, int source) {
     voice_t *v = &k->voices[i];
     v->s = smp;
     v->pos = 0;
-    v->gain = (float)vel / 127.0f;               /* velocity -> amplitude */
+    v->gain = ((float)vel / 127.0f) * k->slot_gain[i];   /* velocity x per-pad trim */
     __atomic_store_n(&v->active, 1, __ATOMIC_RELEASE);
 }
 
@@ -510,7 +511,13 @@ static void set_param(void *inst, const char *key, const char *val) {
     if (!inst || !key) return;
     kit_t *k = (kit_t *)inst;
 
-    if (strncmp(key, "slot_", 5) == 0) {
+    if (strncmp(key, "slot_gain_", 10) == 0) {
+        int i = atoi(key + 10);
+        if (i < 0 || i >= NSLOTS) return;
+        float g = val ? (float)atof(val) : 1.0f;
+        if (g < 0.0f) g = 0.0f; else if (g > 2.0f) g = 2.0f;
+        k->slot_gain[i] = g;
+    } else if (strncmp(key, "slot_", 5) == 0) {
         int i = atoi(key + 5);
         if (i < 0 || i >= NSLOTS) return;
         slot_t *s = &k->slots[i];
@@ -530,6 +537,7 @@ static void set_param(void *inst, const char *key, const char *val) {
             s->pending_path[0] = 0;
             __atomic_store_n(&s->seq, s->seq + 1, __ATOMIC_RELEASE);
             s->status = ST_EMPTY;
+            k->slot_gain[i] = 1.0f;
         }
     } else if (strcmp(key, "mute") == 0) {
         __atomic_store_n(&k->muted, (val && val[0] == '1') ? 1 : 0, __ATOMIC_RELEASE);

@@ -123,3 +123,20 @@ export function clearPad(kit, padIndex) {
     kit.modified_at = nowIso();
     return 'cleared';
 }
+
+/* Per-pad playback gain, 0.0..2.0 (1.0 = 0 dB). Spec §13.3 Gain. */
+export function setPadGain(kit, padIndex, gain) {
+    const p = kit.pads[padIndex];
+    if (!p) return 1.0;
+    const g = Math.max(0, Math.min(2, Number(gain) || 0));
+    p.playback.gain = g;
+    kit.modified_at = nowIso();
+    return g;
+}
+
+export function gainToDbLabel(gain) {
+    const g = Number(gain);
+    if (!(g > 0)) return '-inf dB';
+    const db = 20 * Math.log10(g);
+    return (db >= 0 ? '+' : '') + db.toFixed(1) + ' dB';
+}

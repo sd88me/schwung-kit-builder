@@ -82,11 +82,11 @@ import {
 } from './core/sample_index.mjs';
 
 import {
-    createKit, toggleLock, clearUnlocked, unlockAll, clearPad,
+    createKit, toggleLock, clearUnlocked, unlockAll, clearPad, setPadGain, gainToDbLabel,
     lockedCount as kitLockedCount, assignedCount as kitAssignedCount
 } from './core/kit_model.mjs';
 
-import { assignKit, randomSeed } from './core/random_assign.mjs';
+import { assignKit, rerollPad, randomSeed } from './core/random_assign.mjs';
 
 import {
     saveKit, saveCurrentKit, loadCurrentKit, markMissingSamples, exportMrDrums,
@@ -155,6 +155,8 @@ const ARM_TICKS = 390;         // ~9 s confirm window for New
 /* Knob CCs used as encoder controls in this overtake shell. */
 const KNOB_PAD_SELECT = MoveKnob1;   // 71 — KIT page: Selected Pad (§13.3 encoder 1)
 const KNOB_DUPLICATES = 73;          // knob 3 — RANDOM: Duplicates (§13.2 encoder 3)
+const KNOB_GAIN = MoveKnob1 + 4;     // 75 — knob 5 — KIT page: per-pad Gain (§13.3)
+const GAIN_STEP = 0.04;
 
 /* Momentary flash / feedback durations, in ticks (~44 Hz). */
 const FLASH_TICKS = 6;
@@ -190,6 +192,7 @@ let currentKitName = null;
 let newArmed = 0;              // ticks left in the New confirm window
 let lastStepIdx = -1;         // step-button double-press tracking
 let lastStepAt = 0;
+let heldPad = -1;            // pad currently held (for hold-pad + Assign = re-roll)
 
 let footer = 'Kit Builder ready';
 let needsRedraw = true;
@@ -334,6 +337,7 @@ function shortName(name, max) {
 function onPadPress(index, velocity) {
     const p = kit.pads[index];
     selectedPad = index;   // KIT page follows the last-touched pad
+    if (!shiftHeld) heldPad = index;   // hold pad + Assign = re-roll just this pad
     if (shiftHeld) {
         /* Shift + Pad -> toggle lock (spec §11.2 / §11.3). No trigger. */
         const locked = toggleLock(kit, index);
@@ -372,6 +376,8 @@ function fireAssign() {
         needsRedraw = true;
         return;
     }
+    /* Hold a pad + Assign = re-roll just that pad. */
+    if (heldPad >= 0) { fireRerollPad(heldPad); return; }
     if (!indexInfo || !Array.isArray(indexInfo.records) || indexInfo.records.length === 0) {
         footer = 'No samples indexed — Rescan first';   // §17.3
         needsRedraw = true;
@@ -400,6 +406,33 @@ function fireAssign() {
     footer = res.warning || `Assigned ${assignedCount()}/16 pads`;
     console.log(`${MODULE_TAG}: assign #${assignFireCount} seed=${res.seed} ` +
         `changed=${res.changed.length} unresolved=${res.unresolved.length} relaxed=${res.relaxed.length}`);
+    needsRedraw = true;
+}
+
+/* Re-roll a single held pad (spec §10, one-pad slice). */
+function fireRerollPad(index) {
+    if (busy()) { footer = 'Busy — try again'; needsRedraw = true; return; }
+    const p = kit.pads[index];
+    if (p.locked) { footer = `Pad ${p.pad} is locked`; needsRedraw = true; return; }
+    if (!indexInfo || !Array.isArray(indexInfo.records) || indexInfo.records.length === 0) {
+        footer = 'No samples indexed'; needsRedraw = true; return;
+    }
+    const res = rerollPad({
+        kit, index: indexInfo, config, seed: randomSeed(),
+        source: sourceMode, preventDuplicates, padIndex: index
+    });
+    if (!res.pad || !res.changed) {
+        footer = res.warning ? `Pad ${p.pad}: ${res.warning}` : `Pad ${p.pad} unchanged`;
+        needsRedraw = true;
+        return;
+    }
+    kit.pads[index] = res.pad;
+    kit.modified_at = new Date().toISOString();
+    syncSlot(index);
+    paintPad(index);
+    persistWorkingKit();
+    footer = `Pad ${p.pad}: ${shortName(res.pad.sample.filename, 16)}${res.relaxed ? ' (dup)' : ''}`;
+    console.log(`${MODULE_TAG}: reroll pad ${p.pad} -> ${res.pad.sample.filename}`);
     needsRedraw = true;
 }
 
@@ -632,10 +665,11 @@ function dspGet(key) {
     return (v === null || v === undefined) ? null : String(v);
 }
 
-/* Push one pad's sample path (or "" to clear) to the DSP slot. */
+/* Push one pad's sample path (or "" to clear) and its gain to the DSP slot. */
 function syncSlot(i) {
     const p = kit.pads[i];
     dspSet('slot_' + i, p.sample ? p.sample.filesystem_path : '');
+    dspSet('slot_gain_' + i, (p.playback && p.playback.gain != null) ? p.playback.gain : 1);
 }
 function syncAllSlots() {
     for (let i = 0; i < PAD_COUNT; i++) syncSlot(i);
@@ -692,6 +726,7 @@ globalThis.onMidiMessageInternal = function (data) {
         const padIdx = KIT_PAD_NOTES.indexOf(d1);
         if (padIdx === -1) return;              // ignore the unused 16 pads
         if (isOn) onPadPress(padIdx, d2);
+        else if (heldPad === padIdx) heldPad = -1;   // released
         return;
     }
 
@@ -752,6 +787,18 @@ globalThis.onMidiMessageInternal = function (data) {
                 const dir = delta > 0 ? 1 : -1;
                 selectedPad = Math.max(0, Math.min(PAD_COUNT - 1, selectedPad + dir));
                 needsRedraw = true;
+                return;
+            }
+
+            case KNOB_GAIN: {
+                /* KIT page: per-pad gain trim (spec §13.3 encoder 5). */
+                if (PAGES[pageIndex] !== 'KIT') return;
+                const delta = decodeDelta(d2);
+                if (delta === 0) return;
+                const g = setPadGain(kit, selectedPad, (kit.pads[selectedPad].playback.gain || 1) + delta * GAIN_STEP);
+                dspSet('slot_gain_' + selectedPad, g);
+                persistWorkingKit();
+                needsRedraw = true;   // gain shows on the KIT page itself
                 return;
             }
 
@@ -855,23 +902,22 @@ function drawRandomPage() {
 }
 
 function drawKitPage() {
-    /* No footer here — the pad line would just duplicate what the page shows.
-     * The freed rows carry the sample name in full and its load state. */
+    /* No footer here — a pad line would just repeat what the page shows.
+     * Rows: pad+note / role / lock+gain / category / sample name (+status). */
     const p = kit.pads[selectedPad];
+    const gain = (p.playback && p.playback.gain != null) ? p.playback.gain : 1;
     line(MX, 14, `Pad ${p.pad}   note ${p.midi_note}`);
-    line(MX, 23, `Lock   ${p.locked ? 'yes' : 'no'}`);
-    line(MX, 32, `Role   ${p.role}`);
+    line(MX, 24, `Role   ${p.role}`);
+    line(MX, 34, `Lock ${p.locked ? 'yes' : 'no'}     Gain ${gainToDbLabel(gain)}`);
     if (p.sample) {
         const cat = p.sample.category;
-        line(MX, 41, cat && cat !== p.role ? `Drawn from  ${cat}` : `Category    ${cat || p.role}`);
-        line(MX, 49, p.sample.filename);                     // full width, auto-clamped
+        line(MX, 44, cat && cat !== p.role ? `Drawn from  ${cat}` : `Category    ${cat || p.role}`);
         const st = slotStat.charAt(selectedPad);
-        line(MX, FULL_BOTTOM, st === 'm' ? 'file missing'
-            : st === 'x' ? 'decode error'
-            : st === '.' ? 'loading' : 'loaded');
+        const tag = st === 'm' ? '(missing) ' : st === 'x' ? '(bad file) ' : st === '.' ? '(loading) ' : '';
+        line(MX, 54, tag + p.sample.filename);
     } else {
-        line(MX, 41, 'Sample  -  (empty pad)');
-        line(MX, 49, 'Assign on the RANDOM page');
+        line(MX, 44, 'Sample  -  (empty pad)');
+        line(MX, 54, 'hold pad + Assign to fill');
     }
 }
 
@@ -916,6 +962,7 @@ globalThis.init = function () {
     assignDroppedCount = 0;
     newArmed = 0;
     lastStepIdx = -1;
+    heldPad = -1;
     for (const fx of padFx) { fx.flash = 0; fx.failFlash = 0; }
     footer = 'Kit Builder ready';
 
@@ -1017,6 +1064,7 @@ globalThis.onResume = function () {
     /* Transient input state can't survive a park cleanly. */
     shiftHeld = false;
     assignHeld = false;
+    heldPad = -1;
     footer = 'Resumed';
     refreshIndexView();   /* index age is relative to now */
 
