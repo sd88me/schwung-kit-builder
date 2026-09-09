@@ -243,6 +243,15 @@ verifiable only on device (load MrDrums, browse to the export).
 Move — verified by wiping `overtake/kit-builder/` and extracting the versioned
 tarball fresh.
 
+### Post-packaging fixes
+
+- Display: KIT and SYSTEM page content no longer bleeds into the footer — all
+  pages now keep their bottom row at `CONTENT_BOTTOM` (y=44), clear of the
+  footer separator (y=52). SYSTEM trimmed to the §13.4 figures
+  (Indexed / Kicks / Snares / Hats / Other + Age). The footer status line is
+  cleared on a page change so a message like "Pad 5: …" no longer lingers on
+  another page.
+
 ---
 
 _All seven MVP stages (spec §23) complete; §26 release criteria met bar the

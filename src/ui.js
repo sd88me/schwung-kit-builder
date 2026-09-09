@@ -715,6 +715,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (delta !== 0) {
                     const dir = delta > 0 ? 1 : -1;
                     pageIndex = (pageIndex + dir + PAGES.length) % PAGES.length;
+                    footer = '';   // status line is per-moment, not carried across pages
                     needsRedraw = true;
                 }
                 return;
@@ -823,9 +824,14 @@ function drawHeader() {
     fill_rect(0, 11, SCREEN_W, 1, 1);
 }
 
+/* Content rows live in y = 13..CONTENT_BOTTOM; the footer separator is at
+ * y=52 and footer text at y=54, so a glyph (~8 px) must start no lower than
+ * this or it bleeds into the footer. */
+const CONTENT_BOTTOM = 44;
+
 function drawFooter() {
     fill_rect(0, 52, SCREEN_W, 1, 1);
-    print(MX, 54, clamp(footer, RX - MX), 1);
+    if (footer) print(MX, 54, clamp(footer, RX - MX), 1);
 }
 
 function drawRandomPage() {
@@ -845,30 +851,27 @@ function drawRandomPage() {
     line(rx, 13, `Dup ${preventDuplicates ? 'Avoid' : 'Allow'}`);
     line(rx, 22, `Asn ${assignedCount()}/16`);
     line(rx, 31, `Lck ${lockedCount()}/16`);
-    line(rx, 43, currentKitName || '(unsaved)');
+    line(rx, CONTENT_BOTTOM, currentKitName || '(unsaved)');
 }
 
 function drawKitPage() {
     const p = kit.pads[selectedPad];
-    line(MX, 15, `Pad ${p.pad}  (note ${p.midi_note})`);
+    line(MX, 14, `Pad ${p.pad}   note ${p.midi_note}`);
     line(MX, 24, `Role   ${p.role}`);
-    line(MX, 33, `Samp   ${p.sample ? shortName(p.sample.filename, 15) : '-'}`);
-    line(MX, 42, `Lock   ${p.locked ? 'yes' : 'no'}`);
-    line(MX, 51, `Knob1=pad  Jog=clear`);
+    line(MX, 34, `Sample ${p.sample ? shortName(p.sample.filename, 14) : '-'}`);
+    line(MX, CONTENT_BOTTOM, `Lock   ${p.locked ? 'yes' : 'no'}`);
 }
 
 function drawSystemPage() {
-    /* Rescan / Rebuild-index momentary button (spec §13.4 encoder 8). */
-    const bx = MX, by = 14, bw = 50, bh = 13;
-    const scanning = !!scan;
-    button(bx, by, bw, bh, scanning ? 'SCAN' : 'RESCAN', assignHeld && !scanning);
-    line(bx + bw + 8, 16, 'jog press');
-    line(bx + bw + 8, 25, `Age ${indexAgeText}`);
-
     const s = indexSummary;
-    line(MX, 34, `Indexed ${s.indexed}`);
-    line(MX, 42, `Kicks ${s.kick}   Snares ${s.snare}`);
-    line(MX, 50, `Hats ${s.hats}   Other ${s.other}`);
+    const scanning = !!scan;
+    /* Rescan button top-left, index age beside it, then the §13.4 summary
+     * (Indexed / Kicks / Snares / Hats / Other). */
+    button(MX, 13, 50, 12, scanning ? 'SCAN' : 'RESCAN', assignHeld && !scanning);
+    line(MX + 56, 15, `Age ${indexAgeText}`);
+    line(MX, 27, `Indexed ${s.indexed}`);
+    line(MX, 36, `Kicks ${s.kick}   Snares ${s.snare}`);
+    line(MX, CONTENT_BOTTOM, `Hats ${s.hats}   Other ${s.other}`);
 }
 
 function drawUI() {
