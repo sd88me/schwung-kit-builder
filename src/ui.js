@@ -978,11 +978,11 @@ function drawRandomPage() {
 
 function drawKitPage() {
     /* No footer here — a pad line would just repeat what the page shows.
-     * Rows: pad+note / role / lock+gain / category / sample name (+status).
+     * Rows: pad / role / lock+gain / category / sample name (+status).
      * Right edge: library reject/favourite totals + this sample's standing. */
     const p = kit.pads[selectedPad];
     const gain = (p.playback && p.playback.gain != null) ? p.playback.gain : 1;
-    line(MX, 14, `Pad ${p.pad}   note ${p.midi_note}`);
+    line(MX, 14, `Pad ${p.pad}`);
     line(MX + 88, 14, `R${rejects.size} F${favourites.size}`);
     line(MX, 24, `Role   ${p.role}`);
     line(MX, 34, `Lock ${p.locked ? 'yes' : 'no'}     Gain ${gainToDbLabel(gain)}`);
