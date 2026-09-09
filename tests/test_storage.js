@@ -25,7 +25,7 @@ const storage = await import('../src/core/storage.mjs');
 const {
     saveKit, loadKit, loadKitFromString, markMissingSamples,
     sanitizeFilename, generatedKitName, nextKitNumber, commitKitNumber,
-    KITS_DIR, CURRENT_KIT_PATH
+    loadPrefs, savePrefs, KITS_DIR, CURRENT_KIT_PATH
 } = storage;
 
 const FAKE_INDEX = (() => {
@@ -182,5 +182,28 @@ export const tests = [
         const ok = storage.writeJsonAtomic(first.path, { schema_version: 1, application: 'kit-builder', name: 'ruined', pads: [] });
         eq(ok, false);
         eq(FS.get(first.path), good, 'original file must be unchanged after a failed write');
+    }},
+
+    { name: 'reject / favourite lists persist and round-trip as Sets (Batch C)', fn() {
+        installFsMock();
+        eq(loadPrefs().rejects.size, 0);
+        eq(loadPrefs().favourites.size, 0);
+
+        const rej = new Set(['/lib/kick/bad1.wav', '/lib/snare/bad2.wav']);
+        const fav = new Set(['/lib/kick/love.wav']);
+        assert(savePrefs(rej, fav));
+
+        const back = loadPrefs();
+        assert(back.rejects instanceof Set && back.favourites instanceof Set);
+        eq([...back.rejects].sort(), ['/lib/kick/bad1.wav', '/lib/snare/bad2.wav']);
+        eq([...back.favourites], ['/lib/kick/love.wav']);
+    }},
+
+    { name: 'a malformed preferences.json loads as empty, does not throw (Batch C)', fn() {
+        installFsMock();
+        globalThis.host_write_file(storage.PREFS_PATH, '{ not json');
+        const p = loadPrefs();
+        eq(p.rejects.size, 0);
+        eq(p.favourites.size, 0);
     }},
 ];

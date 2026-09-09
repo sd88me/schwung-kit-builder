@@ -90,7 +90,7 @@ import { assignKit, rerollPad, randomSeed } from './core/random_assign.mjs';
 
 import {
     saveKit, saveCurrentKit, loadCurrentKit, markMissingSamples, exportMrDrums,
-    generatedKitName, nextKitNumber, commitKitNumber
+    generatedKitName, nextKitNumber, commitKitNumber, loadPrefs, savePrefs
 } from './core/storage.mjs';
 
 import {
@@ -189,6 +189,11 @@ const SOURCE_LABEL = { user: 'User', core: 'Core', both: 'Both' };
 let sourceMode = 'user';
 let dupKnobTicks = 0;      // accumulated encoder ticks for the Duplicates knob
 let srcKnobTicks = 0;      // accumulated encoder ticks for the Source knob
+
+/* Library-wide reject / favourite memory (Batch C). Sets of filesystem_path;
+ * loaded once at init, persisted on every change. Not reset by New. */
+let rejects = new Set();
+let favourites = new Set();
 
 let assignHeld = false;         // jog-press currently down
 let assignInFlight = 0;         // >0 while an Assign is settling (reentrancy guard)
@@ -399,7 +404,7 @@ function fireAssign() {
     const seed = randomSeed();
     const res = assignKit({
         kit, index: indexInfo, config, seed,
-        source: sourceMode, preventDuplicates
+        source: sourceMode, preventDuplicates, rejects, favourites
     });
 
     /* Commit the proposed state as one transaction (spec §10.3). */
@@ -428,7 +433,7 @@ function fireRerollPad(index) {
     }
     const res = rerollPad({
         kit, index: indexInfo, config, seed: randomSeed(),
-        source: sourceMode, preventDuplicates, padIndex: index
+        source: sourceMode, preventDuplicates, padIndex: index, rejects, favourites
     });
     if (!res.pad || !res.changed) {
         footer = res.warning ? `Pad ${p.pad}: ${res.warning}` : `Pad ${p.pad} unchanged`;
@@ -587,6 +592,33 @@ function fireClearPad() {
     if (r === 'locked') footer = `Pad ${p.pad} is locked`;
     else if (r === 'empty') footer = `Pad ${p.pad} already empty`;
     else { syncSlot(selectedPad); paintPad(selectedPad); persistWorkingKit(); footer = `Cleared pad ${p.pad}`; }
+    needsRedraw = true;
+}
+
+/* ---- reject / favourite memory (Batch C) ------------------------------- */
+
+/* Toggle the selected pad's sample in the reject or favourite list. The two
+ * are mutually exclusive per sample. Persisted immediately. */
+function markPref(kind) {
+    const p = kit.pads[selectedPad];
+    if (!p || !p.sample) { footer = `Pad ${selectedPad + 1}: no sample`; needsRedraw = true; return; }
+    const path = p.sample.filesystem_path;
+    const nm = shortName(p.sample.filename, 12);
+    if (kind === 'fav') {
+        if (favourites.has(path)) { favourites.delete(path); footer = `${nm}: favourite off`; }
+        else { favourites.add(path); rejects.delete(path); footer = `${nm}: favourite`; }
+    } else {
+        if (rejects.has(path)) { rejects.delete(path); footer = `${nm}: reject off`; }
+        else { rejects.add(path); favourites.delete(path); footer = `${nm}: reject`; }
+    }
+    savePrefs(rejects, favourites);
+    needsRedraw = true;
+}
+
+function clearAllPref(kind) {
+    if (kind === 'fav') { const n = favourites.size; favourites.clear(); footer = `Cleared ${n} favourite(s)`; }
+    else                { const n = rejects.size;    rejects.clear();    footer = `Cleared ${n} reject(s)`; }
+    savePrefs(rejects, favourites);
     needsRedraw = true;
 }
 
@@ -770,11 +802,16 @@ globalThis.onMidiMessageInternal = function (data) {
 
             case MoveUp:
             case MoveDown:
-                /* RANDOM page: move the action selection (spec §13.2 row). */
                 if (d2 > 0 && PAGES[pageIndex] === 'RANDOM') {
+                    /* Move the action selection (spec §13.2 row). */
                     const dir = d1 === MoveDown ? 1 : -1;
                     randomSel = (randomSel + dir + RANDOM_ACTIONS.length) % RANDOM_ACTIONS.length;
                     needsRedraw = true;
+                } else if (d2 > 0 && PAGES[pageIndex] === 'KIT') {
+                    /* Batch C: Up = favourite the selected pad's sample,
+                     * Down = reject it; Shift + either clears that whole list. */
+                    if (shiftHeld) clearAllPref(d1 === MoveUp ? 'fav' : 'rej');
+                    else           markPref(d1 === MoveUp ? 'fav' : 'rej');
                 }
                 return;
 
@@ -941,13 +978,18 @@ function drawRandomPage() {
 
 function drawKitPage() {
     /* No footer here — a pad line would just repeat what the page shows.
-     * Rows: pad+note / role / lock+gain / category / sample name (+status). */
+     * Rows: pad+note / role / lock+gain / category / sample name (+status).
+     * Right edge: library reject/favourite totals + this sample's standing. */
     const p = kit.pads[selectedPad];
     const gain = (p.playback && p.playback.gain != null) ? p.playback.gain : 1;
     line(MX, 14, `Pad ${p.pad}   note ${p.midi_note}`);
+    line(MX + 88, 14, `R${rejects.size} F${favourites.size}`);
     line(MX, 24, `Role   ${p.role}`);
     line(MX, 34, `Lock ${p.locked ? 'yes' : 'no'}     Gain ${gainToDbLabel(gain)}`);
     if (p.sample) {
+        const fp = p.sample.filesystem_path;
+        if (favourites.has(fp))    line(MX + 92, 24, 'FAV');
+        else if (rejects.has(fp))  line(MX + 92, 24, 'REJ');
         const cat = p.sample.category;
         line(MX, 44, cat && cat !== p.role ? `Drawn from  ${cat}` : `Category    ${cat || p.role}`);
         const st = slotStat.charAt(selectedPad);
@@ -1013,6 +1055,11 @@ globalThis.init = function () {
     config = loadConfig();
     indexInfo = loadIndex();
     refreshIndexView();
+
+    /* Batch C: library-wide reject / favourite memory. */
+    const prefs = loadPrefs();
+    rejects = prefs.rejects;
+    favourites = prefs.favourites;
 
     /* Restore the last working kit if there is one (Sam's request — reverses
      * the §3.1 "always blank" default; New gives a fresh slate). Missing

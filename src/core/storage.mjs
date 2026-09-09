@@ -162,6 +162,39 @@ export function loadCurrentKit() {
     return loadKit(CURRENT_KIT_PATH);
 }
 
+/* ---- reject / favourite memory (post-MVP Batch C) ----------------
+ * Library-wide, not per-kit: a sample rejected here is skipped by every
+ * future Assign / re-roll; a favourite is weighted up. Stored as two flat
+ * lists of filesystem paths so the engine can use them as Sets directly. */
+export const PREFS_PATH = KB_DIR + '/preferences.json';
+
+export function loadPrefs() {
+    try {
+        const raw = hRead(PREFS_PATH);
+        if (raw) {
+            const p = JSON.parse(raw);
+            return {
+                rejects: new Set(Array.isArray(p.rejects) ? p.rejects : []),
+                favourites: new Set(Array.isArray(p.favourites) ? p.favourites : [])
+            };
+        }
+    } catch (e) {
+        console.log('kit-builder: preferences.json unreadable, starting empty (' + e + ')');
+    }
+    return { rejects: new Set(), favourites: new Set() };
+}
+
+export function savePrefs(rejects, favourites) {
+    try {
+        hMkdir(KB_DIR);
+        return writeJsonAtomic(PREFS_PATH, {
+            schema_version: 1,
+            rejects: Array.from(rejects || []),
+            favourites: Array.from(favourites || [])
+        });
+    } catch (e) { return false; }
+}
+
 /* ---- MrDrums export (spec §16, §3.3, §24) ------------------------- */
 
 /*

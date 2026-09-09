@@ -45,6 +45,23 @@ Post-MVP work — see [`docs/POST_MVP.md`](docs/POST_MVP.md) for the batch plan.
 - Tests: `test_assignment.js` +1 (source filter restricts / unions picks);
   `test_mrdrums_export.js` +1 (core samples round-trip through MrDrums).
 
+### Batch C — reject / favourite memory
+
+- Library-wide **reject** and **favourite** lists, keyed by sample path,
+  persisted in `KitBuilder/preferences.json`. A rejected sample is never
+  picked by Assign or re-roll; a favourite is weighted ~2× in its role pool.
+  Not tied to a kit and not cleared by `New`.
+- KIT page: **Up** favourites / **Down** rejects the selected pad's sample
+  (mutually exclusive, toggles off on repeat). **Shift+Up** / **Shift+Down**
+  clear the whole favourite / reject list. The KIT page shows this sample's
+  `FAV`/`REJ` standing and the running `R n F n` totals.
+- Engine was already wired (`resolveOne` takes `rejects` / `favourites`
+  Sets); `fireAssign` / `fireRerollPad` now pass the loaded sets. Rejects
+  are dropped before duplicate-relaxation, so relaxation never reinstates
+  one.
+- Tests: `test_storage.js` +2 (prefs round-trip as Sets; malformed file
+  loads empty), `test_assignment.js` +1 (re-roll never lands on a reject).
+
 ## [0.1.0] — unreleased
 
 ### Stage 1 — hardware shell (spec §23)

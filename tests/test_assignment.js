@@ -168,6 +168,19 @@ export const tests = [
         eq(kit.pads.map((p) => p.sample.filesystem_path), before);
     }},
 
+    { name: 'rerollPad never lands on a rejected sample', fn() {
+        const kit = createKit(DEFAULT_CONFIG);
+        let cur = run(kit, FULL);
+        for (let i = 0; i < 16; i++) kit.pads[i] = cur.pads[i];
+        // reject every kick except two
+        const rejects = new Set();
+        for (const r of FULL.records) if (r.category === 'kick' && !/_(19|20)\.wav$/.test(r.filename)) rejects.add(r.filesystem_path);
+        for (let s = 1; s <= 40; s++) {
+            const r = rerollPad({ kit, index: FULL, config: DEFAULT_CONFIG, seed: s * 3 + 1, source: 'user', preventDuplicates: true, padIndex: 0, rejects });
+            if (r.pad && r.pad.sample) assert(!rejects.has(r.pad.sample.filesystem_path), `reroll picked rejected ${r.pad.sample.filesystem_path}`);
+        }
+    }},
+
     { name: 'rerollPad refuses a locked pad', fn() {
         const kit = createKit(DEFAULT_CONFIG);
         let cur = run(kit, FULL);

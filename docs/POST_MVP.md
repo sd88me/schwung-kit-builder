@@ -45,17 +45,19 @@ Both work; index rebuild covers both roots without stalling.
 
 ---
 
-## Batch C — reject / favourite memory  ·  *after B*
+## Batch C — reject / favourite memory  ·  **done** (v0.2.0)
 
-### C1. Per-role reject + favourite lists  ·  medium
-On the KIT page (or hold-pad gesture): mark the current sample **reject**
-("never pick this for its role again") or **favourite** ("prefer it"). Stored
-in `config.json` per role (`{ reject: [...paths], favourite: [...paths] }`).
-`assignKit` drops rejects from the pool and weights favourites up. A way to
-clear the lists (SYSTEM page action). Turns repeated Assign into guided search.
+### C1. Reject + favourite lists  ·  medium  ·  *shipped*
+KIT page: **Up** = favourite the selected pad's sample, **Down** = reject it
+(mutually exclusive, toggle off on repeat); **Shift+Up / Shift+Down** clear the
+whole list. Stored library-wide (flat path lists, not per-role) in
+`KitBuilder/preferences.json` — not tied to a kit, not cleared by `New`.
+`assignKit` / `rerollPad` drop rejects from the pool (before duplicate
+relaxation) and weight favourites ~2×. KIT page shows the sample's `FAV`/`REJ`
+standing plus `R n F n` totals.
 
-**Test C:** a rejected sample never reappears on re-roll for that role; a
-favourite comes up markedly more often; lists persist and can be cleared.
+**Test C:** a rejected sample never reappears on re-roll; a favourite comes up
+markedly more often; lists persist and can be cleared.
 
 ---
 
