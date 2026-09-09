@@ -62,6 +62,28 @@ Post-MVP work — see [`docs/POST_MVP.md`](docs/POST_MVP.md) for the batch plan.
 - Tests: `test_storage.js` +2 (prefs round-trip as Sets; malformed file
   loads empty), `test_assignment.js` +1 (re-roll never lands on a reject).
 
+### Batch D — export system (D1 + D3)
+
+- **EXPORT page** (4th page). Rows toggle each exporter on/off — MrDrums
+  `.ablpreset` (on by default), **MPC `.xpm`** (off by default) — plus an
+  **Export now** row. Up/Down select, jog-press acts on the selection. The
+  toggles persist in `config.json → exports` (next to `next_kit_number`).
+  A Save runs every enabled exporter and reports per-type success.
+- **MPC `.xpm` exporter** (`exporters/mpc_xpm.mjs` + `xpm_template.mjs`).
+  Method per github.com/psrpinto/roger: a real MPC-V 2.1 drum program is the
+  structural template; the export keeps it byte-for-byte and changes only
+  `<ProgramName>`, each used pad's Layer-1 `<SampleName>`, and regenerates
+  `<PadNoteMap>` (Note = (35 + pad) mod 128) / `<PadGroupMap>`. Output is
+  structurally identical to the reference file (verified by diff). Writes
+  `KitBuilder/Exports/MPC/<Kit>/<Kit>.xpm` + a `MANIFEST.txt` listing the
+  source WAV for each pad — the MPC needs the audio beside the `.xpm` named
+  `<SampleName>.wav`, and module JS can't copy audio. `<SliceEnd>` is left 0
+  (whole-sample one-shot); revisit if an MPC truncates playback.
+- Deferred: `.ablpresetbundle` (D2) — needs a reference bundle + binary zip
+  from the DSP loader thread.
+- Tests: new `test_mpc_xpm.js` (9 — template preserved, 128 instruments,
+  per-pad names, PadNoteMap wrap, CRLF, dedup, folder + manifest).
+
 ## [0.1.0] — unreleased
 
 ### Stage 1 — hardware shell (spec §23)

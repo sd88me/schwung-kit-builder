@@ -90,7 +90,8 @@ import { assignKit, rerollPad, randomSeed } from './core/random_assign.mjs';
 
 import {
     saveKit, saveCurrentKit, loadCurrentKit, markMissingSamples, exportMrDrums,
-    generatedKitName, nextKitNumber, commitKitNumber, loadPrefs, savePrefs
+    generatedKitName, nextKitNumber, commitKitNumber, loadPrefs, savePrefs,
+    runExports, loadExportPrefs, saveExportPrefs
 } from './core/storage.mjs';
 
 import {
@@ -138,7 +139,15 @@ const LED = {
     FAIL_FLASH:        Red             // temporary red   — no eligible sample
 };
 
-const PAGES = ['RANDOM', 'KIT', 'SYSTEM'];
+const PAGES = ['RANDOM', 'KIT', 'SYSTEM', 'EXPORT'];
+
+/* EXPORT page (Batch D): rows 0..n-1 toggle an exporter; the last row runs
+ * every enabled one now. Up/Down select, jog-press acts on the selection. */
+const EXPORT_ROWS = [
+    { id: 'mrdrums', label: 'MrDrums .ablpreset' },
+    { id: 'mpcxpm',  label: 'MPC .xpm' },
+    { id: '__now',   label: 'Export now' }
+];
 
 /* RANDOM-page action list — Up/Down (or step buttons 1..N) select, jog-press
  * or a step double-press fires (spec §13.2). Each has a step-button LED colour. */
@@ -194,6 +203,10 @@ let srcKnobTicks = 0;      // accumulated encoder ticks for the Source knob
  * loaded once at init, persisted on every change. Not reset by New. */
 let rejects = new Set();
 let favourites = new Set();
+
+/* EXPORT page state (Batch D). */
+let exportSel = 0;
+let exportPrefs = { mrdrums: true, mpcxpm: false };
 
 let assignHeld = false;         // jog-press currently down
 let assignInFlight = 0;         // >0 while an Assign is settling (reentrancy guard)
@@ -515,16 +528,19 @@ function fireSave() {
             if (res.ok) {
                 if (fresh && !res.overwrote) commitKitNumber(num);
                 currentKitName = res.name;
-                /* §3.3: a save also writes the MrDrums export. */
-                const ex = exportMrDrums(kit, res.name);
-                if (ex.ok) {
+                /* §3.3: a save also runs every enabled exporter (Batch D). */
+                const ex = runExports(kit, res.name, exportPrefs);
+                const failed = ex.filter((r) => !r.ok);
+                const warns = ex.reduce((n, r) => n + r.warnings.length, 0);
+                if (!failed.length) {
                     footer = `${res.overwrote ? 'Updated' : 'Saved'}: ${res.name}` +
-                        (ex.warnings.length ? ` (${ex.warnings.length} warn)` : '');
-                    console.log(`${MODULE_TAG}: saved ${res.path}; exported ${ex.path} (${ex.padCount} pads, ${ex.warnings.length} warn)`);
+                        (ex.length ? ` — ${ex.length} export${ex.length > 1 ? 's' : ''}` : '') +
+                        (warns ? ` (${warns} warn)` : '');
                 } else {
-                    footer = `Kit saved, MrDrums export failed`;   // §17.3
-                    console.log(`${MODULE_TAG}: saved ${res.path}; export failed — ${ex.errors.join(', ')}`);
+                    footer = `Saved; ${failed.map((r) => r.id).join('+')} export failed`;   // §17.3
                 }
+                console.log(`${MODULE_TAG}: saved ${res.path}; exports ` +
+                    ex.map((r) => `${r.id}:${r.ok ? 'ok' : 'FAIL'}`).join(' '));
             } else {
                 footer = `Save failed: ${res.error}`;   // §17.3
                 console.log(`${MODULE_TAG}: save failed — ${res.error}`);
@@ -660,6 +676,37 @@ function fireRescan() {
     }
     footer = 'Scanning User Library...';
     console.log(`${MODULE_TAG}: rescan started root=${scan.state.root}`);
+    needsRedraw = true;
+}
+
+/* ---- EXPORT-page action (Batch D) ------------------------------------- */
+
+function fireExportAction() {
+    const row = EXPORT_ROWS[exportSel];
+    if (!row) return;
+
+    if (row.id !== '__now') {
+        exportPrefs[row.id] = !exportPrefs[row.id];
+        saveExportPrefs(exportPrefs);
+        footer = `${row.label}: ${exportPrefs[row.id] ? 'on' : 'off'}`;
+        needsRedraw = true;
+        return;
+    }
+
+    /* Export now — run every enabled exporter against the working kit. */
+    if (busy()) { footer = 'Busy — try again'; needsRedraw = true; return; }
+    if (assignedCount() === 0) { footer = 'Nothing to export — assign a kit'; needsRedraw = true; return; }
+    const enabled = EXPORT_ROWS.filter((r) => r.id !== '__now' && exportPrefs[r.id]);
+    if (!enabled.length) { footer = 'No exporters enabled'; needsRedraw = true; return; }
+
+    const name = currentKitName || kit.name || 'Kit Builder';
+    const res = runExports(kit, name, exportPrefs);
+    const failed = res.filter((r) => !r.ok);
+    const warns = res.reduce((n, r) => n + r.warnings.length, 0);
+    footer = failed.length
+        ? `Exported ${res.length - failed.length}/${res.length} — ${failed.map((r) => r.id).join('+')} failed`
+        : `Exported ${res.length} type${res.length > 1 ? 's' : ''}${warns ? ` (${warns} warn)` : ''}`;
+    console.log(`${MODULE_TAG}: export now "${name}" — ` + res.map((r) => `${r.id}:${r.ok ? 'ok' : 'FAIL'}`).join(' '));
     needsRedraw = true;
 }
 
@@ -812,6 +859,11 @@ globalThis.onMidiMessageInternal = function (data) {
                      * Down = reject it; Shift + either clears that whole list. */
                     if (shiftHeld) clearAllPref(d1 === MoveUp ? 'fav' : 'rej');
                     else           markPref(d1 === MoveUp ? 'fav' : 'rej');
+                } else if (d2 > 0 && PAGES[pageIndex] === 'EXPORT') {
+                    /* Batch D: move the exporter selection. */
+                    const dir = d1 === MoveDown ? 1 : -1;
+                    exportSel = (exportSel + dir + EXPORT_ROWS.length) % EXPORT_ROWS.length;
+                    needsRedraw = true;
                 }
                 return;
 
@@ -880,7 +932,8 @@ globalThis.onMidiMessageInternal = function (data) {
                 /* Jog-press is the page's momentary button (Move's encoders
                  * don't physically click, so the jog stands in for the encoder
                  * buttons of spec §13.2 / §13.3 / §13.4):
-                 *   RANDOM -> selected action   KIT -> Clear Pad   SYSTEM -> Rescan
+                 *   RANDOM -> selected action   KIT -> Clear Pad
+                 *   SYSTEM -> Rescan            EXPORT -> selected row
                  * A held flag drives the on-screen button; fires on press only. */
                 if (d2 > 0 && !assignHeld) {
                     assignHeld = true;
@@ -888,6 +941,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (pg === 'RANDOM') fireRandomAction();
                     else if (pg === 'KIT') fireClearPad();
                     else if (pg === 'SYSTEM') fireRescan();
+                    else if (pg === 'EXPORT') fireExportAction();
                     needsRedraw = true;
                 } else if (d2 === 0 && assignHeld) {
                     assignHeld = false;
@@ -1015,6 +1069,22 @@ function drawSystemPage() {
     line(MX, FULL_BOTTOM, `Perc ${s.perc}`); line(cx, FULL_BOTTOM, `FX ${s.fx}`);
 }
 
+function drawExportPage() {
+    /* Exporter list — [x]/[ ] toggles, last row is "Export now". Selected row
+     * inverted; jog-press acts on it. Footer shows the last result. */
+    for (let i = 0; i < EXPORT_ROWS.length; i++) {
+        const r = EXPORT_ROWS[i];
+        const y = 14 + i * 10;
+        const text = r.id === '__now' ? r.label : `${exportPrefs[r.id] ? '[x]' : '[ ]'} ${r.label}`;
+        if (i === exportSel) {
+            fill_rect(0, y - 1, RX, 9, 1);
+            print(MX, y, clamp(text, RX - MX), 0);
+        } else {
+            line(MX, y, text);
+        }
+    }
+}
+
 function drawUI() {
     clear_screen();
     drawHeader();
@@ -1022,6 +1092,7 @@ function drawUI() {
         case 'RANDOM': drawRandomPage(); drawFooter(); break;   // footer: RANDOM only
         case 'KIT':    drawKitPage();    break;
         case 'SYSTEM': drawSystemPage(); break;
+        case 'EXPORT': drawExportPage(); drawFooter(); break;   // footer: last export result
     }
 }
 
@@ -1060,6 +1131,10 @@ globalThis.init = function () {
     const prefs = loadPrefs();
     rejects = prefs.rejects;
     favourites = prefs.favourites;
+
+    /* Batch D: which exporters a Save runs. */
+    exportPrefs = loadExportPrefs();
+    exportSel = 0;
 
     /* Restore the last working kit if there is one (Sam's request — reverses
      * the §3.1 "always blank" default; New gives a fresh slate). Missing

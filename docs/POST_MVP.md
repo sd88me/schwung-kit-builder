@@ -61,31 +61,38 @@ markedly more often; lists persist and can be cleared.
 
 ---
 
-## Batch D — export system  ·  *after C*
+## Batch D — export system  ·  *in progress* (D1 + D3 shipped v0.2.0)
 
-### D1. EXPORT page with per-type toggles  ·  small–medium
-New 4th page **EXPORT**. Toggle each exporter on/off (persisted in
-`config.json → exports`): MrDrums `.ablpreset` (on by default), Ableton
-`.ablpresetbundle`, Akai MPC `.xpm`. Save runs every enabled exporter;
-per-type success/failure reported. Jog-press on EXPORT = "export now" without
-a save.
+### D1. EXPORT page with per-type toggles  ·  **done** (v0.2.0)
+4th page **EXPORT**: rows toggle MrDrums `.ablpreset` (default on) and MPC
+`.xpm` (default off), plus an **Export now** row. Up/Down select, jog-press
+acts. Persisted in `config.json → exports`. Save runs every enabled exporter,
+per-type success reported.
 
-### D2. `.ablpresetbundle` export  ·  medium  ·  *binary I/O risk*
+### D3. Akai MPC `.xpm` export  ·  **done** (v0.2.0)
+Template-substitution off a real MPC-V 2.1 drum program (Sam supplied
+`All_purposeCrunchy_Kit.xpm`; method per github.com/psrpinto/roger). Keeps the
+program byte-for-byte, sets `<ProgramName>` + per-pad Layer-1 `<SampleName>`,
+regenerates `<PadNoteMap>` ((35+pad) mod 128) / `<PadGroupMap>`. Output diffs
+clean against the reference. Writes `KitBuilder/Exports/MPC/<Kit>/<Kit>.xpm` +
+`MANIFEST.txt`; user (or a later copy step) gathers the WAVs as
+`<SampleName>.wav` beside it. `<SliceEnd>`=0 for now.
+
+### D2. `.ablpresetbundle` export  ·  medium  ·  *deferred — needs a reference bundle + binary I/O*
 Zip containing the `.ablpreset` + a `Samples/` folder of copied WAVs, so a kit
 is portable without the source library. Module JS can't do binary file I/O
 safely (`host_read_file` → string), so the **DSP loader thread** does it:
 `set_param("export_bundle", "<destpath>")` → read each slot's raw file, emit a
 **store-only** (no-deflate) zip. Watch total size (16 samples can be tens of MB).
+Blocked on a real Move-exported `.ablpresetbundle` to match the archive layout.
 
-### D3. Akai MPC `.xpm` export  ·  medium  ·  *needs real reference files*
-`.xpm` is XML — straightforward to template — but the schema drifts across
-MPC 2.x / 3.x, so match a real file, don't invent (the MrDrums §16.3 lesson).
-Per-pad sample path + tuning + envelope + (optional) velocity layers. For real
-MPC transfer the samples must travel too (same binary-copy path as D2), or
-export the `.xpm` referencing resolvable paths only.
+### D3. Akai MPC `.xpm` export  ·  **done** (see above)
+Also still to do: actually copy the WAVs beside the `.xpm` (same DSP byte-copy
+path D2 needs) so it's a one-step transfer, not "gather per MANIFEST.txt".
 
-**Test D:** EXPORT toggles persist; a bundle unzips to a working `.ablpreset`
-+ samples; the `.xpm` loads on an MPC (or validates against a known-good file).
+**Test D:** EXPORT toggles persist ✓; `.xpm` diffs clean vs the reference ✓;
+still to verify — `.xpm` loads + plays on Sam's MPC; a bundle unzips to a
+working `.ablpreset` + samples.
 
 ---
 

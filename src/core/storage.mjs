@@ -10,12 +10,36 @@ import * as os from 'os';
 import { KB_DIR, CONFIG_PATH } from './sample_index.mjs';
 import { validateKit } from './validation.mjs';
 import { exportKit as buildAndWriteExport } from '../exporters/mrdrums_json.mjs';
+import { exportXpm as buildAndWriteXpm, MPC_EXPORT_ROOT } from '../exporters/mpc_xpm.mjs';
 
 export const KITS_DIR = KB_DIR + '/Kits';
 export const CURRENT_KIT_PATH = KB_DIR + '/current-kit.json';
 /* Move's own Track Presets folder — an exported .ablpreset shows up in Move's
  * preset browser and can be loaded straight into MrDrums (Sam's call). */
 export const MRDRUMS_EXPORT_DIR = '/data/UserData/UserLibrary/Track Presets';
+
+/* Which exporters a Save runs. Persisted in config.json under `exports`
+ * (alongside next_kit_number). MrDrums on by default — that is the MVP
+ * behaviour. Batch D. */
+export const EXPORT_IDS = ['mrdrums', 'mpcxpm'];
+const EXPORT_DEFAULTS = { mrdrums: true, mpcxpm: false };
+
+export function loadExportPrefs() {
+    const e = readRawConfig().exports;
+    const out = {};
+    for (const id of EXPORT_IDS) {
+        out[id] = (e && typeof e[id] === 'boolean') ? e[id] : EXPORT_DEFAULTS[id];
+    }
+    return out;
+}
+
+export function saveExportPrefs(prefs) {
+    const cfg = readRawConfig();
+    cfg.exports = cfg.exports || {};
+    for (const id of EXPORT_IDS) if (prefs && typeof prefs[id] === 'boolean') cfg.exports[id] = prefs[id];
+    hMkdir(KB_DIR);
+    return writeJsonAtomic(CONFIG_PATH, cfg);
+}
 
 /* ---- host shims (undefined under node) --------------------------------- */
 
@@ -209,6 +233,29 @@ export function exportMrDrums(kit, name) {
         name: name || kit.name || 'Kit Builder',
         write: (p, s) => hWrite(p, s)
     });
+}
+
+/* MPC .xpm export (Batch D3). Writes <Root>/<Kit>/<Kit>.xpm + MANIFEST.txt.
+ * The MPC needs the WAVs beside the .xpm, named <SampleName>.wav — module JS
+ * can't copy audio, so MANIFEST.txt lists what to gather. */
+export function exportMpcXpm(kit, name) {
+    hMkdir(MPC_EXPORT_ROOT);
+    return buildAndWriteXpm(kit, {
+        dir: MPC_EXPORT_ROOT,
+        name: name || kit.name || 'Kit Builder',
+        mkdir: (p) => hMkdir(p),
+        write: (p, s) => hWrite(p, s)
+    });
+}
+
+/* Run every enabled exporter for `kit`. Returns [{ id, ok, path, warnings,
+ * errors }]. Order: mrdrums, mpcxpm. */
+export function runExports(kit, name, prefs) {
+    prefs = prefs || loadExportPrefs();
+    const out = [];
+    if (prefs.mrdrums) { const r = exportMrDrums(kit, name); out.push({ id: 'mrdrums', ok: r.ok, path: r.path, warnings: r.warnings || [], errors: r.errors || [] }); }
+    if (prefs.mpcxpm)  { const r = exportMpcXpm(kit, name);  out.push({ id: 'mpcxpm',  ok: r.ok, path: r.path, warnings: r.warnings || [], errors: r.errors || [] }); }
+    return out;
 }
 
 /* ---- load + validate (spec §21.6 — storage-layer only) ------------ */
