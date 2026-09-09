@@ -161,7 +161,7 @@ const GAIN_STEP = 0.04;
 /* The Move encoders have no detents and fire several ticks per light touch.
  * Enum knobs (Duplicates / Source) accumulate ticks and only step once the
  * run crosses this threshold, so a stray brush doesn't flip them. */
-const ENUM_KNOB_TICKS = 4;
+const ENUM_KNOB_TICKS = 8;
 
 /* Momentary flash / feedback durations, in ticks (~44 Hz). */
 const FLASH_TICKS = 6;

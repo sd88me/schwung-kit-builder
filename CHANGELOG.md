@@ -30,7 +30,7 @@ Post-MVP work — see [`docs/POST_MVP.md`](docs/POST_MVP.md) for the batch plan.
   pages; resets to User on a fresh `New`/launch, preserved across a Back-park.
 - RANDOM-page knob layout: **Knob 1 = Duplicates, Knob 2 = Source** (Duplicates
   moved off knob 3). Both enum knobs now accumulate encoder ticks and only step
-  once a turn crosses `ENUM_KNOB_TICKS` (4) — the detent-less Move encoders fire
+  once a turn crosses `ENUM_KNOB_TICKS` (8) — the detent-less Move encoders fire
   several ticks per light touch, so a brush no longer flips them.
 - `sample_index.createScan` now walks **every library root that exists** in one
   pass, tagging each record with its `source`. The cached index stores
