@@ -153,11 +153,15 @@ const DOUBLE_PRESS_MS = 400;   // step-button double-press window
 const ARM_TICKS = 390;         // ~9 s confirm window for New
 
 /* Knob CCs used as encoder controls in this overtake shell. */
-const KNOB_PAD_SELECT = MoveKnob1;   // 71 — KIT page: Selected Pad (§13.3 encoder 1)
-const KNOB_SOURCE = MoveKnob1 + 1;   // 72 — knob 2 — RANDOM: Source (§13.2 encoder 2)
-const KNOB_DUPLICATES = 73;          // knob 3 — RANDOM: Duplicates (§13.2 encoder 3)
+const KNOB_PAD_SELECT = MoveKnob1;   // 71 — knob 1 — KIT page: Selected Pad (§13.3 encoder 1)
+const KNOB_DUPLICATES = MoveKnob1;   // 71 — knob 1 — RANDOM page: Duplicates (§13.2)
+const KNOB_SOURCE = MoveKnob1 + 1;   // 72 — knob 2 — RANDOM page: Source (§13.2)
 const KNOB_GAIN = MoveKnob1 + 4;     // 75 — knob 5 — KIT page: per-pad Gain (§13.3)
 const GAIN_STEP = 0.04;
+/* The Move encoders have no detents and fire several ticks per light touch.
+ * Enum knobs (Duplicates / Source) accumulate ticks and only step once the
+ * run crosses this threshold, so a stray brush doesn't flip them. */
+const ENUM_KNOB_TICKS = 4;
 
 /* Momentary flash / feedback durations, in ticks (~44 Hz). */
 const FLASH_TICKS = 6;
@@ -183,6 +187,8 @@ let preventDuplicates = true;
 const SOURCE_MODES = ['user', 'core', 'both'];      // §13.2 Source enum
 const SOURCE_LABEL = { user: 'User', core: 'Core', both: 'Both' };
 let sourceMode = 'user';
+let dupKnobTicks = 0;      // accumulated encoder ticks for the Duplicates knob
+let srcKnobTicks = 0;      // accumulated encoder ticks for the Source knob
 
 let assignHeld = false;         // jog-press currently down
 let assignInFlight = 0;         // >0 while an Assign is settling (reentrancy guard)
@@ -772,26 +778,44 @@ globalThis.onMidiMessageInternal = function (data) {
                 }
                 return;
 
-            case KNOB_DUPLICATES: {
-                /* RANDOM page: Duplicates enum — CW = Allow, CCW = Avoid (§13.2). */
-                if (PAGES[pageIndex] !== 'RANDOM') return;
+            case KNOB_PAD_SELECT: {   /* CC 71 = knob 1 */
                 const delta = decodeDelta(d2);
                 if (delta === 0) return;
-                const next = delta < 0;   // CCW -> Avoid
-                if (next !== preventDuplicates) {
-                    preventDuplicates = next;
-                    footer = `Duplicates: ${preventDuplicates ? 'Avoid' : 'Allow'}`;
+
+                if (PAGES[pageIndex] === 'RANDOM') {
+                    /* Duplicates enum — CW = Allow, CCW = Avoid (§13.2).
+                     * Accumulate ticks so a light touch doesn't flip it. */
+                    dupKnobTicks += delta;
+                    if (Math.abs(dupKnobTicks) < ENUM_KNOB_TICKS) return;
+                    const next = dupKnobTicks < 0;   // CCW -> Avoid
+                    dupKnobTicks = 0;
+                    if (next !== preventDuplicates) {
+                        preventDuplicates = next;
+                        footer = `Duplicates: ${preventDuplicates ? 'Avoid' : 'Allow'}`;
+                        needsRedraw = true;
+                    }
+                    return;
+                }
+
+                if (PAGES[pageIndex] === 'KIT') {
+                    /* Selected Pad 1..16 (spec §13.3 encoder 1). */
+                    const dir = delta > 0 ? 1 : -1;
+                    selectedPad = Math.max(0, Math.min(PAD_COUNT - 1, selectedPad + dir));
                     needsRedraw = true;
                 }
                 return;
             }
 
             case KNOB_SOURCE: {
-                /* RANDOM page: Source enum — cycles User -> Core -> User+Core (§13.2). */
+                /* RANDOM page: Source enum — cycles User -> Core -> Both (§13.2).
+                 * Same tick accumulation as Duplicates. */
                 if (PAGES[pageIndex] !== 'RANDOM') return;
                 const delta = decodeDelta(d2);
                 if (delta === 0) return;
-                const dir = delta > 0 ? 1 : -1;
+                srcKnobTicks += delta;
+                if (Math.abs(srcKnobTicks) < ENUM_KNOB_TICKS) return;
+                const dir = srcKnobTicks > 0 ? 1 : -1;
+                srcKnobTicks = 0;
                 const at = SOURCE_MODES.indexOf(sourceMode);
                 const nextMode = SOURCE_MODES[(at + dir + SOURCE_MODES.length) % SOURCE_MODES.length];
                 if (nextMode !== sourceMode) {
@@ -800,17 +824,6 @@ globalThis.onMidiMessageInternal = function (data) {
                     footer = `Source: ${SOURCE_LABEL[sourceMode]}`;
                     needsRedraw = true;
                 }
-                return;
-            }
-
-            case KNOB_PAD_SELECT: {
-                /* KIT page: Selected Pad 1..16 (spec §13.3 encoder 1). */
-                if (PAGES[pageIndex] !== 'KIT') return;
-                const delta = decodeDelta(d2);
-                if (delta === 0) return;
-                const dir = delta > 0 ? 1 : -1;
-                selectedPad = Math.max(0, Math.min(PAD_COUNT - 1, selectedPad + dir));
-                needsRedraw = true;
                 return;
             }
 
@@ -983,6 +996,8 @@ globalThis.init = function () {
     randomSel = 0;
     preventDuplicates = true;
     sourceMode = 'user';
+    dupKnobTicks = 0;
+    srcKnobTicks = 0;
     assignHeld = false;
     assignInFlight = 0;
     assignFireCount = 0;
@@ -1092,6 +1107,8 @@ globalThis.onResume = function () {
     shiftHeld = false;
     assignHeld = false;
     heldPad = -1;
+    dupKnobTicks = 0;
+    srcKnobTicks = 0;
     footer = 'Resumed';
     refreshIndexView();   /* index age is relative to now */
 
