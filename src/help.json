@@ -1,0 +1,138 @@
+{
+  "title": "Kit Builder",
+  "children": [
+    {
+      "title": "Overview",
+      "lines": [
+        "Build 16-pad drum",
+        "kits from the Move",
+        "User Library.",
+        "",
+        "Open from Schwung's",
+        "overtake menu.",
+        "Back parks it,",
+        "Shift+Back exits.",
+        "",
+        "Works now: index +",
+        "random assignment.",
+        "Not yet: audio",
+        "preview and save."
+      ]
+    },
+    {
+      "title": "Pages",
+      "lines": [
+        "Turn the jog wheel",
+        "to move between",
+        "RANDOM, KIT and",
+        "SYSTEM.",
+        "",
+        "Press the jog wheel",
+        "to fire the current",
+        "page's button.",
+        "",
+        "Back parks Kit",
+        "Builder with state",
+        "intact; Shift+Back",
+        "fully exits."
+      ]
+    },
+    {
+      "title": "Pads",
+      "lines": [
+        "The left 4x4 block",
+        "is pads 1-16, laid",
+        "out like a Move",
+        "drum rack (kick",
+        "bottom-left).",
+        "",
+        "Green  = loaded.",
+        "White  = loaded +",
+        "         locked.",
+        "Bright = sounding.",
+        "Amber  = sample",
+        "         won't load.",
+        "Teal   = empty.",
+        "Dim wt = empty +",
+        "         locked.",
+        "Red    = no sample",
+        "         was found.",
+        "",
+        "Press an assigned",
+        "pad to hear it.",
+        "Shift + Pad locks",
+        "or unlocks it;",
+        "locked pads survive",
+        "Assign and Clear."
+      ]
+    },
+    {
+      "title": "RANDOM page",
+      "lines": [
+        "Up / Down pick an",
+        "action, jog press",
+        "fires it:",
+        "",
+        "Assign - fill every",
+        "  unlocked pad.",
+        "New - blank kit (two",
+        "  presses to confirm).",
+        "Save - name + write",
+        "  to KitBuilder/Kits;",
+        "  re-saving overwrites",
+        "  the same file. Also",
+        "  writes a MrDrums",
+        "  .ablpreset into",
+        "  Track Presets.",
+        "Clear - empty unlocked",
+        "  pads.",
+        "Unlock All - drop",
+        "  every lock.",
+        "",
+        "Step buttons 1-5 are",
+        "the same actions, colour",
+        "coded. Tap to pick,",
+        "tap again to run.",
+        "",
+        "Knob 3 = Duplicates",
+        "Avoid / Allow.",
+        "",
+        "The kit reloads on",
+        "restart; New starts",
+        "fresh."
+      ]
+    },
+    {
+      "title": "KIT page",
+      "lines": [
+        "Knob 1 selects a",
+        "pad; the page shows",
+        "its role, sample",
+        "and lock state.",
+        "",
+        "Jog press clears",
+        "the selected pad",
+        "(unless it is",
+        "locked)."
+      ]
+    },
+    {
+      "title": "SYSTEM page",
+      "lines": [
+        "Jog press Rescans:",
+        "walks the User",
+        "Library, sorts",
+        "samples by folder",
+        "name into Kick,",
+        "Snare, Hats, etc.,",
+        "and shows counts.",
+        "",
+        "Folder matching is",
+        "case- and separator-",
+        "insensitive; the",
+        "deepest matching",
+        "folder wins."
+      ]
+    }
+  ]
+}

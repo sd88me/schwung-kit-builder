@@ -1,0 +1,16 @@
+// Kit Builder — entry for the Schwung module catalogue (module-catalog.json).
+// Paste this object into the "modules" array of the upstream catalogue, then
+// it appears in Schwung Manager's Module Store and auto-updates from the
+// repo's release.json. Adjust "github_repo" to the real repo.
+{
+  "id": "kit-builder",
+  "name": "Kit Builder",
+  "description": "Build, audition and save 16-pad drum kits from the Move User Library; exports a MrDrums-loadable .ablpreset",
+  "author": "Sam DiDomizio",
+  "component_type": "overtake",
+  "github_repo": "sd88me/schwung-kit-builder",
+  "default_branch": "main",
+  "asset_name": "kit-builder-module.tar.gz",
+  "min_host_version": "0.12.0",
+  "requires": "Drum samples in /data/UserData/UserLibrary/Samples, sorted into folders (Kick, Snare, Hats, ...)"
+}

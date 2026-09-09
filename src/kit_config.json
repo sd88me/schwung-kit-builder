@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "sample_roots": {
+    "user": "/data/UserData/UserLibrary/Samples",
+    "core": "/data/CoreLibrary/Samples"
+  },
+  "supported_extensions": [".wav", ".aif", ".aiff"],
+  "role_rules": {
+    "kick": {
+      "pads": [1],
+      "folder_aliases": ["kick", "kicks", "bd", "bass drum"],
+      "fallback_roles": []
+    },
+    "snare": {
+      "pads": [2],
+      "folder_aliases": ["snare", "snares", "sd"],
+      "fallback_roles": []
+    },
+    "clap": {
+      "pads": [3],
+      "folder_aliases": ["clap", "claps"],
+      "fallback_roles": ["snare"]
+    },
+    "open_hat": {
+      "pads": [4],
+      "folder_aliases": ["open hat", "open hats", "open_hat", "open-hat", "openhihat", "oh"],
+      "fallback_roles": ["percussion"]
+    },
+    "closed_hat": {
+      "pads": [5],
+      "folder_aliases": ["closed hat", "closed hats", "closed_hat", "closed-hat", "closedhihat", "ch"],
+      "fallback_roles": ["percussion"]
+    },
+    "percussion": {
+      "pads": [6],
+      "folder_aliases": ["percussion", "perc"],
+      "fallback_roles": ["other"]
+    },
+    "fx": {
+      "pads": [7],
+      "folder_aliases": ["fx", "sfx", "effects"],
+      "fallback_roles": ["percussion", "other"]
+    },
+    "other": {
+      "pads": [8, 9, 10, 11, 12, 13, 14, 15, 16],
+      "folder_aliases": ["other"],
+      "exclude_recognised_role_folders": true,
+      "fallback_roles": []
+    }
+  }
+}

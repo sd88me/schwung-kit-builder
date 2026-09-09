@@ -1,0 +1,48 @@
+# Build the Kit Builder module and publish a GitHub release on a v* tag.
+#
+#   1. bump "version" in src/module.json + add a CHANGELOG entry
+#   2. bash scripts/package_release.sh   (updates release.json)
+#   3. commit, then:  git tag v0.1.0 && git push origin main --tags
+#
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  MODULE_ID: kit-builder
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cross-compile the DSP
+        run: |
+          docker build -t kit-builder-dsp -f scripts/Dockerfile.dsp .
+          docker run --rm -v "$PWD:/build" -w /build \
+            -e CROSS_PREFIX=aarch64-linux-gnu- kit-builder-dsp \
+            make -C src/dsp clean all
+          test -f src/dsp/dsp.so
+
+      - name: Assemble + validate the module
+        run: |
+          SKIP_DSP=1 bash scripts/build_kit_builder.sh
+          bash scripts/validate_release.sh
+
+      - name: Version check
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          MJ="$(python3 -c 'import json;print(json.load(open("src/module.json"))["version"])')"
+          [ "$TAG" = "$MJ" ] || { echo "tag v$TAG != module.json $MJ"; exit 1; }
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          files: dist/${{ env.MODULE_ID }}-module.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

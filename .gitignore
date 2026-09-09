@@ -1,0 +1,5 @@
+dist/kit-builder/
+dist/*.tar.gz
+node_modules/
+src/dsp/dsp.so
+src/dsp/*.o
