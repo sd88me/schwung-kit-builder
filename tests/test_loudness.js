@@ -1,6 +1,7 @@
 /*
- * Automatic loudness matching (Batch E1). The DSP measures RMS; this module
- * turns the readings into per-pad makeup gains.
+ * Automatic loudness matching (Batch E1). The DSP reports each slot's
+ * peak-window RMS; this module turns the readings into per-pad gains. Default
+ * behaviour is attenuate-only, so the match can never introduce clipping.
  */
 import { assert, eq } from './run.js';
 import { parseLoudness, matchGains } from '../src/core/loudness.mjs';
@@ -15,20 +16,22 @@ export const tests = [
         eq(parseLoudness(null).every((x) => x === 0), true);
     }},
 
-    { name: 'matchGains: pulls a lopsided kit toward the median', fn() {
-        // median of [0.1, 0.2, 0.4] is 0.2 -> gains 2.0, 1.0, 0.5
+    { name: 'matchGains: attenuate-only — louder pads come down to a low percentile', fn() {
+        // sorted [0.1, 0.2, 0.4]; 25th-pct target = 0.1
         const g = matchGains([0.1, 0.2, 0.4]);
-        eq(g[0], 2.0);
-        eq(g[1], 1.0);
-        eq(g[2], 0.5);
-        for (let i = 3; i < 16; i++) eq(g[i], 1.0);   // empty slots untouched
+        eq(g[0], 1.0);      // the quiet one is left alone
+        eq(g[1], 0.5);      // 0.1 / 0.2
+        eq(g[2], 0.25);     // 0.1 / 0.4
+        for (let i = 3; i < 16; i++) eq(g[i], 1.0);
+        assert(g.every((x) => x <= 1.0), 'nothing is boosted');
     }},
 
-    { name: 'matchGains: empty / silent slots keep gain 1.0', fn() {
+    { name: 'matchGains: empty / silent slots and quiet-but-present slots keep 1.0', fn() {
         const g = matchGains([0.2, 0, 0.05, 0]);
         eq(g[1], 1.0);
         eq(g[3], 1.0);
-        assert(g[2] > 1.0, 'the quiet-but-present slot is boosted');
+        eq(g[2], 1.0);              // quiet present slot is NOT boosted (attenuate-only)
+        assert(g[0] < 1.0, 'the loud slot is pulled down');
     }},
 
     { name: 'matchGains: all-silent -> all 1.0', fn() {
@@ -36,17 +39,25 @@ export const tests = [
         eq(matchGains([]).every((x) => x === 1.0), true);
     }},
 
-    { name: 'matchGains: respects the gain caps', fn() {
-        // one very quiet, one very loud sample against a mid target
-        const g = matchGains([0.005, 0.5, 0.1], { target: 0.1 });
-        eq(g[0], 2.0);      // 0.1/0.005 = 20 -> clamped to maxGain 2.0
-        eq(g[1], 0.25);     // 0.1/0.5 = 0.2 -> clamped to minGain 0.25
-        eq(g[2], 1.0);
+    { name: 'matchGains: minGain floor, and a very quiet sample is left at unity', fn() {
+        const g = matchGains([0.005, 0.5, 0.1], { target: 0.02 });
+        eq(g[0], 1.0);      // 0.02/0.005 = 4 -> would boost -> clamped to maxGain 1.0
+        eq(g[1], 0.15);     // 0.02/0.5 = 0.04 -> below minGain 0.15
+        eq(g[2], 0.2);      // 0.02/0.1
     }},
 
-    { name: 'matchGains: explicit target + custom caps', fn() {
+    { name: 'matchGains: opts can re-enable makeup boost', fn() {
         const g = matchGains([0.2, 0.1], { target: 0.2, minGain: 0.5, maxGain: 4 });
         eq(g[0], 1.0);
-        eq(g[1], 2.0);     // 0.2/0.1 = 2, within [0.5, 4]
+        eq(g[1], 2.0);     // 0.2/0.1 = 2, allowed by maxGain 4
+    }},
+
+    { name: 'matchGains: explicit percentile', fn() {
+        // sorted [0.1, 0.2, 0.3, 0.4]; 50th pct -> idx 2 -> target 0.3
+        const g = matchGains([0.1, 0.2, 0.3, 0.4], { percentile: 0.5 });
+        eq(g[0], 1.0);     // 0.3/0.1 = 3 -> clamped to 1.0
+        eq(g[1], 1.0);     // 0.3/0.2 = 1.5 -> clamped to 1.0
+        eq(g[2], 1.0);
+        eq(g[3], 0.75);    // 0.3/0.4
     }}
 ];

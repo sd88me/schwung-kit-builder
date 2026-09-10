@@ -19,8 +19,9 @@
  *   get_param "sounding"   -> decimal 16-bit mask of slots with an active voice
  *   get_param "slot_status"-> 16 chars, one per slot: - empty  o ok  m missing
  *                             x decode-error  . loading
- *   get_param "loudness"   -> 16 space-separated RMS fractions (0..~1), one per
- *                             slot; 0 = empty / not loaded (E1 loudness match)
+ *   get_param "loudness"   -> 16 space-separated peak-window RMS fractions
+ *                             (0..~1), one per slot; 0 = empty / not loaded
+ *                             (E1 loudness match)
  *
  * E2 audition step sequencer (16 fixed steps, one 16-bit lane per pad):
  *   set_param "seq_run"    = "1"/"0"  play / stop (stop resets playhead to 0)

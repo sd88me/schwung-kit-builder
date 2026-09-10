@@ -231,17 +231,34 @@ static sample_t *build_sample(const src_pcm_t *src, int *status) {
     return out;
 }
 
-/* RMS of a decoded slot as a fraction of full scale (E1 loudness match). Runs
- * on the loader thread only. Empty / silent -> 0. */
+/* Perceived-loudness proxy for a decoded slot: the RMS of its LOUDEST ~125 ms
+ * window, as a fraction of full scale (E1 loudness match). Whole-sample RMS
+ * would let a long quiet tail drag a punchy hit's number down (and vice
+ * versa); the peak window is what the ear actually judges. One O(frames) pass
+ * with a sliding sum-of-squares. Loader thread only. Empty / silent -> 0. */
 static float measure_rms(const sample_t *s) {
     if (!s || !s->data || s->frames <= 0) return 0.0f;
-    long n = (long)s->frames * s->channels;
+    const int ch = s->channels;
+    const long total = s->frames;
+    long win = MOVE_SAMPLE_RATE / 8;           /* 125 ms */
+    if (win > total) win = total;
+    if (win < 1) return 0.0f;
+    const long nwin = win * ch;
+
     double acc = 0.0;
-    for (long i = 0; i < n; i++) {
-        double v = (double)s->data[i];
-        acc += v * v;
+    for (long i = 0; i < nwin; i++) { double v = (double)s->data[i]; acc += v * v; }
+    double best = acc;
+
+    for (long f = win; f < total; f++) {
+        for (int c = 0; c < ch; c++) {
+            double a = (double)s->data[f * ch + c];
+            double b = (double)s->data[(f - win) * ch + c];
+            acc += a * a - b * b;
+        }
+        if (acc > best) best = acc;
     }
-    return (float)(sqrt(acc / (double)n) / 32768.0);
+    if (best < 0.0) best = 0.0;                 /* fp drift guard */
+    return (float)(sqrt(best / (double)nwin) / 32768.0);
 }
 
 static int valid_bits(int bits, int is_float) {

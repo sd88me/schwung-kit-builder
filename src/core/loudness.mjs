@@ -22,9 +22,17 @@ export function parseLoudness(s) {
 
 /*
  * matchGains(loudnesses, opts) -> number[16]
- *   loudnesses  array of RMS fractions; 0 (or missing) = slot left at gain 1.0
- *   opts.target   reference level; default = median of the non-zero readings
- *   opts.minGain  default 0.25   opts.maxGain default 2.0 (the kit model cap)
+ *   loudnesses  array of peak-window RMS fractions; 0 (or missing) = slot left
+ *               at gain 1.0
+ *
+ * Default is ATTENUATE-ONLY: the target is a low percentile of the readings,
+ * so the quietest pads keep unity gain and everything louder is turned DOWN to
+ * meet them. Nothing is boosted, so the match can never add clipping (a boost
+ * on an already-hot one-shot was the E1 distortion bug). Override with opts:
+ *   opts.percentile  target = this fraction into the sorted readings (def 0.25)
+ *   opts.target      explicit target level (overrides percentile)
+ *   opts.minGain     floor,   default 0.15  (just "don't mute it")
+ *   opts.maxGain     ceiling, default 1.0   (set > 1 to allow makeup boost)
  * Gains are rounded to 1e-3.
  */
 export function matchGains(loudnesses, opts) {
@@ -35,9 +43,16 @@ export function matchGains(loudnesses, opts) {
     const nz = lo.filter((x) => Number(x) > EPS).map(Number).sort((a, b) => a - b);
     if (!nz.length) return lo.map(() => 1.0);
 
-    const target = opts.target != null ? Number(opts.target) : nz[Math.floor(nz.length / 2)];
-    const minG = opts.minGain != null ? Number(opts.minGain) : 0.25;
-    const maxG = opts.maxGain != null ? Number(opts.maxGain) : 2.0;
+    let target;
+    if (opts.target != null) {
+        target = Number(opts.target);
+    } else {
+        const pct = opts.percentile != null ? Number(opts.percentile) : 0.25;
+        const idx = Math.max(0, Math.min(nz.length - 1, Math.floor(pct * nz.length)));
+        target = nz[idx];
+    }
+    const minG = opts.minGain != null ? Number(opts.minGain) : 0.15;
+    const maxG = opts.maxGain != null ? Number(opts.maxGain) : 1.0;
 
     return lo.map((x) => {
         const v = Number(x);

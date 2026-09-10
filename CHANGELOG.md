@@ -9,15 +9,19 @@ device verification.
 
 ### E1 — automatic loudness matching
 
-- The DSP loader thread measures each decoded slot's RMS (fraction of full
-  scale) and reports all 16 via `get_param("loudness")`.
-- `src/core/loudness.mjs` (pure): `matchGains()` turns the readings into a
-  per-pad makeup gain that pulls every non-silent pad toward the median
-  level, clamped to the kit model's 0.25–2.0 range. Empty slots stay at 1.0.
+- The DSP loader thread measures each decoded slot's **peak-window RMS** (the
+  loudest ~125 ms — whole-sample RMS let a long quiet tail drag a punchy
+  hit's number down) and reports all 16 via `get_param("loudness")`.
+- `src/core/loudness.mjs` (pure): `matchGains()` is **attenuate-only** by
+  default — the target is a low percentile of the readings, so the quietest
+  pads keep unity gain and everything louder is turned *down* to meet them.
+  Nothing is boosted, so the match can't add clipping. Empty slots stay at
+  1.0; `opts` (`percentile` / `target` / `minGain` / `maxGain`) can re-enable
+  makeup boost.
 - **RANDOM page → "Match Levels"** (6th action; step button 6). Applies the
   gains to every assigned pad's `playback.gain` + the DSP `slot_gain`, and
   persists. A manual Knob-5 trim afterwards still overrides.
-- Tests: `test_loudness.js` (6).
+- Tests: `test_loudness.js` (7).
 
 ### E2 — audition step sequencer
 
