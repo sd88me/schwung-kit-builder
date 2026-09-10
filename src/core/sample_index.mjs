@@ -64,7 +64,7 @@ export const DEFAULT_CONFIG = {
         chord:      { folder_aliases: ['chord', 'chords'] },
         lead:       { folder_aliases: ['lead', 'leads', 'melody', 'melodic', 'melodies'] },
         pad:        { folder_aliases: ['pad', 'pads', 'atmosphere', 'ambient', 'texture', 'textures', 'drone', 'drones', 'strings', 'keys', 'piano', 'organ', 'brass'] },
-        other:      { folder_aliases: ['other'], exclude_recognised_role_folders: true }
+        other:      { folder_aliases: ['other'] }
     },
     /* Which categories each pad draws from — a union pool, uniform pick.
      * `["other"]` = every category with no dedicated pad slot, plus `fx`. */

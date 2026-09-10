@@ -340,7 +340,7 @@ authoritative copy is `config/default_kit_config.json`.)*
     "chord":      { "folder_aliases": ["chord", "chords"] },
     "lead":       { "folder_aliases": ["lead", "melody", "melodic"] },
     "pad":        { "folder_aliases": ["pad", "atmosphere", "ambient", "texture", "strings", "keys", "piano", "..."] },
-    "other":      { "folder_aliases": ["other"], "exclude_recognised_role_folders": true }
+    "other":      { "folder_aliases": ["other"] }
   },
   "pad_layout": [
     ["kick"], ["rim", "snare"], ["snare"], ["clap", "percussion"],

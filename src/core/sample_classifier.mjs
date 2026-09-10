@@ -29,8 +29,9 @@ export function normalizeToken(s) {
 /*
  * Build a lookup from normalised folder alias -> role name.
  * `roleRules` is the `role_rules` object from the config (§7.1). "other" is
- * excluded from the alias index: it is the fallback, not a folder match, and
- * it carries `exclude_recognised_role_folders` (§7.3).
+ * excluded from the alias index — it is the default result, not a folder
+ * match, and the deepest-match rule already keeps a nested subfolder from
+ * demoting a sample to "other" (§7.3).
  */
 export function buildAliasIndex(roleRules) {
     const index = new Map();
