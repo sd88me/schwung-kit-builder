@@ -3,7 +3,7 @@
   "name": "Kit Builder",
   "version": "0.3.1",
   "component_type": "overtake",
-  "stage": "post-MVP (Batches A–G + E)",
+  "stage": "stable",
   "download_url": "https://github.com/sd88me/schwung-kit-builder/releases/download/v0.3.1/kit-builder-module.tar.gz",
   "notes": "v0.3.1 — display overhaul: adopts the shared Schwung UI chrome (movy header, hint-pill footer on every page, transient messages as auto-dismissing overlay toasts) and the shared list widget for the EXPORT page. Sequencer fixes: the audition sequencer is force-cleared on module start, and Play always toggles run/stop. Longer status toasts. Builds on v0.3.0 (Batch E: loudness matching + audition step sequencer)."
 }

@@ -6,8 +6,8 @@
  * no `host_*`.
  */
 
-/* Pad 1..16 -> MIDI note 36..51 (spec §6.4). Configurable later if MrDrums
- * uses a different contract. */
+/* Pad 1..16 -> MIDI note 36..51 (spec §6.4). Configurable later if a preset
+ * consumer uses a different contract. */
 export const PAD_MIDI_NOTES = Array.from({ length: 16 }, (_, i) => 36 + i);
 
 /* Rev. 3 — each pad draws from a UNION of categories (spec §7.4, adopted from

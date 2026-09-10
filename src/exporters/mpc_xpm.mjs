@@ -1,5 +1,5 @@
 /*
- * Kit Builder — Akai MPC .xpm export (post-MVP Batch D3)
+ * Kit Builder — Akai MPC .xpm export (Batch D3)
  *
  * The MPC program format is not documented; per github.com/psrpinto/roger the
  * safe approach is to take a real exported .xpm as a template and change only

@@ -1,5 +1,5 @@
 /*
- * Kit Builder — scan-time sample filters (post-MVP Batch F, adapted from
+ * Kit Builder — scan-time sample filters (Batch F, adapted from
  * github.com/klingklangmatze/drum-kit-generator).
  *
  * Two opt-in filters applied while the index is built, addressing the memory

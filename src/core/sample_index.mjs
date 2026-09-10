@@ -2,7 +2,7 @@
  * Kit Builder — sample index: recursive User Library scan, classification,
  * cached index file (spec §8).
  *
- * Runs in the module UI (QuickJS) — there is no DSP in the MVP. The scan is
+ * Runs in the module UI (QuickJS); the scan never touches the DSP. It is
  * CHUNKED: createScan() returns a pump whose step(budget) processes a bounded
  * number of directory entries and returns, so tick() stays responsive and the
  * scan never blocks the display (spec §4.1, §20). Filesystem metadata only —

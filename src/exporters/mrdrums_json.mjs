@@ -1,10 +1,11 @@
 /*
- * Kit Builder — MrDrums export (spec §16, §24)
+ * Kit Builder — Move drum preset export (spec §16, §24)
  *
- * The "MrDrums-compatible JSON" of the spec is, in the shipping MrDrums
- * (handcraftedcc/schwung-mrdrums), the **Ableton native drum-rack preset**:
- * MrDrums loads a `.ablpreset` / `.json` via set_param("ui_preset_path", …)
- * and walks  instrumentRack -> drumRack -> chains[] , one chain per pad:
+ * The export target is the **native Move drum-rack preset** — the same
+ * `.ablpreset` Move writes for its own Track Presets. It is not a
+ * MrDrums-proprietary format; MrDrums (handcraftedcc/schwung-mrdrums) just
+ * happens to load the same file, via set_param("ui_preset_path", …), by
+ * walking  instrumentRack -> drumRack -> chains[] , one chain per pad:
  *
  *   { "drumZoneSettings": { "receivingNote": 36..51, "chokeGroup": null },
  *     "devices": [ { "kind": "drumCell",
@@ -12,11 +13,11 @@
  *       "parameters": { <full 42-param block — see DRUM_CELL_DEFAULTS> } } ] }
  *
  * The drumCell parameter block is written in full (verbatim from a real Move
- * drum-rack export) so the preset also satisfies Move's own Track-Preset
- * loader, not just MrDrums. Kit Builder only drives `Volume` (from pad gain)
- * and `Pan`; MrDrums ignores the rest.
+ * drum-rack export) so the preset satisfies Move's own Track-Preset loader.
+ * Kit Builder only drives `Volume` (from pad gain) and `Pan`; a consumer that
+ * reads the preset (Move, MrDrums) takes the rest from these defaults.
  *
- * MrDrums maps Volume dB -> gain as  gain = 10^((dB+12)/20)  (so -12 dB = 1.0),
+ * A loader maps Volume dB -> gain as  gain = 10^((dB+12)/20)  (so -12 dB = 1.0),
  * and resolves sampleUri: `ableton:/user-library/X` -> `/data/UserData/UserLibrary/X`,
  * `ableton:/packs/abl-core-library/X` -> `/data/CoreLibrary/X`, absolute `/…`
  * as-is; the string is url-decoded first (so `%20` and `+` both mean space).
@@ -43,7 +44,7 @@ function encodePath(p) {
     return String(p).split('/').map(encodeURIComponent).join('/');
 }
 
-/* Build the sampleUri MrDrums will resolve back to sample.filesystem_path. */
+/* Build the sampleUri a loader resolves back to sample.filesystem_path. */
 export function sampleUriFor(sample) {
     if (sample.ableton_uri && sample.ableton_uri.indexOf(USER_URI_PREFIX) === 0) {
         return USER_URI_PREFIX + encodePath(sample.ableton_uri.slice(USER_URI_PREFIX.length));

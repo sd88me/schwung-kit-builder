@@ -2,25 +2,146 @@
 
 A standalone [Schwung](https://github.com/charlesvestal/schwung) **Overtake module**
 for Ableton Move: build 16-pad drum kits by randomly drawing samples from the Move
-User Library by role, audition them on the pads, lock the ones that work, re-roll
-the rest, then save — and export a **MrDrums-loadable `.ablpreset`** into Move's
-Track Presets.
+library by role, audition them on the pads, lock the ones that work, re-roll the
+rest, even out their levels, then save.
 
-- MVP specification: [`docs/KIT_BUILDER_SPEC.md`](docs/KIT_BUILDER_SPEC.md)
-- Implementation decisions + MrDrums comparison: [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md)
-- Changes: [`CHANGELOG.md`](CHANGELOG.md)
+Save writes a working kit file **and** exports a **native Move drum preset**
+(`.ablpreset`) into Move's Track Presets — the same format Move writes for its own
+presets, so it loads in Move directly and, being the identical file, in
+[MrDrums](https://github.com/handcraftedcc/schwung-mrdrums) as well. An optional
+Akai MPC `.xpm` exporter is available alongside it.
 
-**v0.1.0 — feature-complete MVP.** All seven implementation stages of §23 are
-done; on-device hardware testing across stages 1–6 passed, packaging is stage 7.
+- Technical specification: [`docs/KIT_BUILDER_SPEC.md`](docs/KIT_BUILDER_SPEC.md)
+- Implementation decisions + format comparison: [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md)
+- Backlog: [`docs/POST_MVP.md`](docs/POST_MVP.md)
+- Full change history: [`CHANGELOG.md`](CHANGELOG.md)
+
+Current release: **v0.3.1**.
+
+## Features
+
+- **Role-aware random fill.** Each pad draws from a union of sample categories
+  (kick, snare, hats, percussion, FX, plus melodic categories); 22 categories
+  classified from folder names, with a filename-keyword fallback.
+- **Re-roll one pad** — hold a pad and fire **Assign** to redraw just that pad.
+- **Locks** — locked pads survive Assign and Clear.
+- **Internal audition player** — press a pad to hear its sample, velocity-scaled,
+  no JS round-trip.
+- **Automatic loudness matching** — *Match Levels* evens out pad loudness
+  (attenuate-only by default, so it can't add clipping).
+- **Audition step sequencer** — a 16-step internal clock at the Move's tempo for
+  hearing the kit as a pattern. Transient: not saved, not exported.
+- **Source select** — draw from the User Library, the Core Library, or both.
+- **Per-pad gain trim** on the KIT page (travels with the kit as `Volume` dB).
+- **Reject / favourite memory** — library-wide, persisted; a rejected sample is
+  never drawn, a favourite is weighted up.
+- **Scan filters** — skip loop-named files and cap sample size at scan time.
+- **Exporters** — native Move drum preset (`.ablpreset`, on by default) and Akai
+  MPC `.xpm` with gathered samples (opt-in), toggled on the EXPORT page.
+- **Session restore** — the working kit is saved on every change and restored on
+  next launch; *New* is the way to a blank slate.
+
+Nothing modifies or deletes source sample files.
+
+## Requirements
+
+- Schwung on the Move (`min_host_version` 0.12.0).
+- Drum samples in `/data/UserData/UserLibrary/Samples/` (and/or
+  `/data/CoreLibrary/Samples/`), sorted into folders whose names name the
+  category (`Kick`, `Snare`, `Clap`, `Open Hat`, `Closed Hat`, `Percussion`,
+  `FX`, …). Folder matching is case- and separator-insensitive and the deepest
+  matching folder wins; anything unrecognised lands in "Other".
+
+## Using it
+
+Four pages, moved between by **turning the jog wheel**: `RANDOM`, `KIT`,
+`SYSTEM`, `EXPORT`. **Jog press** fires the current page's action. Every page
+carries the shared Schwung header (kit name / page name) and a footer of
+key→action hint pills; transient status ("Assigned 14 pads", "Saved: …") shows
+as an auto-dismissing overlay toast.
+
+### Pads (left 4×4 block, Move drum-rack layout — kick bottom-left)
+
+| LED | meaning |
+|---|---|
+| green | sample loaded |
+| white | loaded **and** locked |
+| bright | currently sounding |
+| amber | sample file could not be loaded |
+| teal | empty |
+| dim white | empty and locked |
+| red flash | that pad's pool had no eligible sample |
+
+Press an assigned pad to hear it (velocity-sensitive). **Shift + Pad** locks /
+unlocks — locked pads survive Assign and Clear. **Back** parks the module (state
+kept, silent); **Shift + Back** exits.
+
+### RANDOM page
+
+**Up/Down** (or **step buttons 1–6**, colour-coded) select an action;
+**jog press** — or a second step-button press within ~0.4 s — fires it:
+
+- **Assign** — fill every unlocked pad with a random sample of its pool
+  (ascending pad order, no duplicates, avoids each pad's current sample; seeded
+  and the seed is stored in the kit). Hold a pad while firing to re-roll only
+  that pad.
+- **New** — start a blank kit (press again within ~9 s to confirm). Also clears
+  the sequencer.
+- **Save** — name it on the keyboard (default `Kit Builder NNN YYYY-MM-DD`),
+  write `KitBuilder/Kits/<name>.kitbuilder.json`, and run every enabled
+  exporter. Re-saving the same session overwrites one file; changing the name is
+  a "save as".
+- **Clear** — empty every unlocked pad.
+- **Unlock All** — drop every lock.
+- **Match Levels** — measure each assigned pad and trim gains so they sit at a
+  common loudness. A manual Knob-5 trim afterwards still overrides.
+
+**Knob 1** toggles **Duplicates** (Avoid / Allow). **Knob 2** cycles **Source**
+(User / Core / Both) — resets to User on a fresh `New` or launch.
+
+### KIT page
+
+**Knob 1** selects a pad (pool / sample / lock shown). **Knob 5** trims the
+selected pad's gain, shown as dB. **Up** favourites / **Down** rejects the
+pad's sample for future draws (mutually exclusive, toggles off on repeat);
+**Shift+Up** / **Shift+Down** clear the whole favourite / reject list.
+**Jog press** clears the pad unless locked.
+
+### SYSTEM page
+
+**Jog press** = **Rescan**: walks the selected library roots, classifies each
+sample by folder name (deepest match; filename-keyword fallback), and caches the
+index to `KitBuilder/.sample-index.json`. Runs in bounded chunks so the display
+never stalls. A fixed header plus a scrollable list (**Up/Down**) shows: indexed
+count, loop-filter state, size cap, skipped ("Cut") count, the eight category
+buckets, and "Other". **Knob 1** toggles the loop-name filter; **Knob 2** cycles
+the max-sample-size cap (Off / 1M / 2M / 5M / 10M). Both persist in
+`KitBuilder/config.json` and take effect on the next Rescan.
+
+### EXPORT page
+
+**Up/Down** select a row, **jog press** acts on it:
+
+- **Move preset `.ablpreset`** (on by default) — the native Move drum-rack
+  preset, written to `Track Presets/`; also loads in MrDrums.
+- **MPC `.xpm`** (off by default) — an Akai MPC program with each assigned
+  sample gathered beside it (`MANIFEST.txt` lists anything that couldn't be
+  copied).
+- **Export now** — run the enabled formats for the current kit without a Save.
+
+The toggles persist in `config.json → exports`. A Save runs the same set.
+
+### Sequencer
+
+**Rec** toggles the pattern-edit view (LED stays lit); the 16 step buttons arm /
+disarm steps for the pad on **Knob 1**, and a full-screen SEQ readout replaces
+the page. **Play** runs / stops the clock, independent of the view. Tempo
+follows the Move's global BPM. Parking (**Back**) or resuming brings it back
+stopped at step 1 with the pattern intact; **New** clears it.
 
 ---
 
 ## Install
-
-**Requires** Schwung on the Move (`min_host_version` 0.12.0) and drum samples in
-`/data/UserData/UserLibrary/Samples/`, sorted into folders whose names name the
-role (`Kick`, `Snare`, `Clap`, `Open Hat`, `Closed Hat`, `Percussion`, `FX`,
-anything else lands in "Other").
 
 ### Schwung Manager (recommended)
 
@@ -46,86 +167,20 @@ ssh move 'tar -xzf /data/UserData/kit-builder-module.tar.gz \
 Open it from **Schwung → Overtake → Kit Builder**. After a native (`dsp.so`)
 update, fully exit (**Shift + Back**) and reopen, or reboot the Move.
 
----
-
-## Using it
-
-Three pages, moved between by **turning the jog wheel**: `RANDOM`, `KIT`, `SYSTEM`.
-**Jog press** fires the current page's action.
-
-### Pads (left 4×4 block, Move drum-rack layout — kick bottom-left)
-
-| LED | meaning |
-|---|---|
-| green | sample loaded |
-| white | loaded **and** locked |
-| bright | currently sounding |
-| amber | sample file could not be loaded |
-| teal | empty |
-| dim white | empty and locked |
-| red flash | that role had no eligible sample |
-
-Press an assigned pad to hear it (velocity-sensitive). **Shift + Pad** locks /
-unlocks — locked pads survive Assign and Clear. **Back** parks the module (state
-kept, silent); **Shift + Back** exits.
-
-### RANDOM page
-
-**Up/Down** (or **step buttons 1–5**, colour-coded) select an action;
-**jog press** — or a second step-button press within ~0.4 s — fires it:
-
-- **Assign** — fill every unlocked pad with a random sample of its role
-  (ascending pad order, no duplicates, avoids each pad's current sample; seeded
-  and the seed is stored in the kit).
-- **New** — start a blank kit (press again within ~9 s to confirm).
-- **Save** — name it on the keyboard (default `Kit Builder NNN YYYY-MM-DD`),
-  write `KitBuilder/Kits/<name>.kitbuilder.json`, and export
-  `Track Presets/<name>.ablpreset` for MrDrums. Re-saving the same session
-  overwrites one file; changing the name is a "save as".
-- **Clear** — empty every unlocked pad.
-- **Unlock All** — drop every lock.
-
-**Knob 3** toggles **Duplicates** (Avoid / Allow).
-
-### KIT page
-
-**Knob 1** selects a pad (role / sample / lock shown); **jog press** clears it
-unless locked.
-
-### SYSTEM page
-
-**Jog press** = **Rescan**: walks the User Library, classifies each sample by
-folder name (case- and separator-insensitive; the deepest matching folder wins),
-and caches the index to `KitBuilder/.sample-index.json`. Runs in bounded chunks
-so the display never stalls. Shows per-category counts and how long ago the index
-was built. Config is the §7.1 default, overridable by `KitBuilder/config.json`.
-
-The working kit is written to `KitBuilder/current-kit.json` on every change and
-**restored on next launch** — `New` is the way to a blank slate.
-
----
-
-## Known limitations (MVP)
+## Not included
 
 - **No in-tool browsing / reloading of saved kits.** Save writes a working file
   and `current-kit.json` restores the last session, but there is no UI to load
-  an arbitrary older kit back in (spec §2.2, §3.1).
-- **MrDrums export only.** Direct Ableton `.ablpreset` for Move's own instrument
-  rack, `.ablpresetbundle` (with copied sample audio), and Akai MPC `.xpm` are
-  not generated. The exported file references samples in place by
-  `ableton:/user-library/` URI.
-- **User Library only.** The Core Library is not scanned; the `Source` control
-  has one option.
-- **No per-pad editing.** Pan, tune, sample start/end, filter and envelope are
-  out of scope; playback is `gain` only (fixed at 0 dB), no choke groups.
+  an arbitrary older kit back in.
+- **Reference-in-place export.** The `.ablpreset` references samples by
+  `ableton:/user-library/` URI; `.ablpresetbundle` (with copied sample audio) is
+  not generated. The MPC `.xpm` does gather its samples.
+- **No per-pad editing beyond gain.** Pan, tune, sample start/end, filter and
+  envelope are out of scope; no choke groups.
 - **One voice per pad.** A fast repeat on the same pad retriggers rather than
   layering.
-- No waveform display, no automatic loudness matching, no audio-analysis
-  classification.
-
-Nothing modifies or deletes source sample files.
-
----
+- No waveform display; classification is folder/filename only, not audio
+  analysis.
 
 ## Development
 
@@ -133,8 +188,9 @@ Nothing modifies or deletes source sample files.
 src/
   module.json ui.js help.json kit_config.json
   core/       kit_model · random_assign · sample_index · sample_classifier ·
-              path_mapping · storage · validation      (ES modules, pure = unit-tested)
-  exporters/  mrdrums_json.mjs
+              scan_filters · loudness · path_mapping · storage · validation
+              (ES modules, pure = unit-tested)
+  exporters/  mrdrums_json.mjs · mpc_xpm.mjs · xpm_template.mjs · wav_strip.mjs
   dsp/        kit_player.c/.h · Makefile · include/host/plugin_api_v1.h
 scripts/      build_kit_builder.sh · build_dsp.sh · install.sh ·
               validate_release.sh · package_release.sh · Dockerfile.dsp
@@ -146,7 +202,7 @@ tests/        run.js + test_*.js   (dependency-free; `npm test`)
   `schwung-builder` Docker image, or `scripts/Dockerfile.dsp`. `SKIP_DSP=1`
   packages the UI only.
 - `npm test` runs the classifier / path-mapping / assignment / storage /
-  MrDrums-export suites (needs Node; the device has none).
+  loudness / scan-filter / export suites (needs Node; the device has none).
 - `scripts/package_release.sh` builds, validates, refreshes `release.json`, and
   prints the tag + upload steps. `.github/workflows/release.yml` does this on a
   `v*` tag.

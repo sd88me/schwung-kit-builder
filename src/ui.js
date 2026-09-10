@@ -1,7 +1,7 @@
 /*
  * Kit Builder — Overtake module
  * ------------------------------------------------------
- * MVP spec: docs/KIT_BUILDER_SPEC.md
+ * Spec: docs/KIT_BUILDER_SPEC.md
  *
  * Stage 1 (spec §23 / §27) — hardware shell:
  *   - opens as an overtake module; receives pad + Shift+Pad events
@@ -51,15 +51,15 @@
  *   - Step buttons 1..N mirror the RANDOM action list, coloured to match:
  *     single press selects, a second press within DOUBLE_PRESS_MS fires.
  *
- * Stage 6 (spec §16) — MrDrums export:
- *   - Save also writes an Ableton drum-rack `.ablpreset` to
- *     Move's Track Presets folder — the format the shipping MrDrums actually
- *     loads (instrumentRack -> drumRack -> one chain per assigned pad, gain as
- *     Volume dB, `ableton:/user-library/` %-encoded sampleUri). See
+ * Stage 6 (spec §16) — Move drum preset export:
+ *   - Save also writes a native Move drum-rack `.ablpreset` to Move's Track
+ *     Presets folder. It is the format Move writes for its own presets, so it
+ *     loads in Move and, being the same file, in MrDrums too (instrumentRack
+ *     -> drumRack -> one chain per assigned pad, gain as Volume dB,
+ *     `ableton:/user-library/` %-encoded sampleUri). See
  *     core/exporters/mrdrums_json.mjs. An export failure never touches the
  *     saved kit file (§16.5).
- *
- * NOT here yet: packaging (Stage 7).
+ *   - The EXPORT page adds an opt-in Akai MPC `.xpm` exporter alongside it.
  */
 
 import {
@@ -153,7 +153,7 @@ const PAGES = ['RANDOM', 'KIT', 'SYSTEM', 'EXPORT'];
 /* EXPORT page (Batch D): rows 0..n-1 toggle an exporter; the last row runs
  * every enabled one now. Up/Down select, jog-press acts on the selection. */
 const EXPORT_ROWS = [
-    { id: 'mrdrums', label: 'MrDrums .ablpreset' },
+    { id: 'mrdrums', label: 'Move preset .ablpreset' },
     { id: 'mpcxpm',  label: 'MPC .xpm' },
     { id: '__now',   label: 'Export now' }
 ];

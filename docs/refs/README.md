@@ -37,7 +37,7 @@ ProgramName, MuteGroup).
 
 `.ablpresetbundle` is an *inbound* format (built off-device, uploaded to Move
 via Move Manager, or opened in Note). Kit Builder runs on Move and its kits
-are already there as the MrDrums `.ablpreset`, so there's no import path for
+are already there as the native Move `.ablpreset`, so there's no import path for
 it to serve; a kit leaving Move with its samples is Move's native
 `.ablbundle` drum-rack save. No exporter, no reference kept. `wav_strip.mjs`
 survives — it serves the MPC `.xpm` gather.

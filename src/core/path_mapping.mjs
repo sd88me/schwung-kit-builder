@@ -9,8 +9,8 @@
  */
 
 /* Known roots. The filesystem prefixes match spec §7.1 defaults; the URI
- * prefixes are the Ableton conventions from §9.1 / §9.2. Core Library is
- * prepared but not enabled in the MVP (§9.2). */
+ * prefixes are the Ableton conventions from §9.1 / §9.2. All three sources
+ * (user / core / both) are active — the `core` root is enabled (§9.2, Batch B). */
 export const ROOTS = [
     {
         source: 'user',

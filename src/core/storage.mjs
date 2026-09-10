@@ -15,13 +15,14 @@ import { exportXpm as buildAndWriteXpm, MPC_EXPORT_ROOT } from '../exporters/mpc
 
 export const KITS_DIR = KB_DIR + '/Kits';
 export const CURRENT_KIT_PATH = KB_DIR + '/current-kit.json';
-/* Move's own Track Presets folder — an exported .ablpreset shows up in Move's
- * preset browser and can be loaded straight into MrDrums (Sam's call). */
+/* Move's own Track Presets folder — an exported .ablpreset is the native Move
+ * drum-rack preset format: it shows up in Move's own preset browser and also
+ * loads straight into MrDrums. */
 export const MRDRUMS_EXPORT_DIR = '/data/UserData/UserLibrary/Track Presets';
 
 /* Which exporters a Save runs. Persisted in config.json under `exports`
- * (alongside next_kit_number). MrDrums on by default — that is the MVP
- * behaviour. Batch D. */
+ * (alongside next_kit_number). The Move drum preset (.ablpreset) is on by
+ * default; the MPC .xpm is opt-in. Batch D. */
 export const EXPORT_IDS = ['mrdrums', 'mpcxpm'];
 const EXPORT_DEFAULTS = { mrdrums: true, mpcxpm: false };
 
@@ -228,7 +229,7 @@ export function loadCurrentKit() {
     return loadKit(CURRENT_KIT_PATH);
 }
 
-/* ---- reject / favourite memory (post-MVP Batch C) ----------------
+/* ---- reject / favourite memory (Batch C) ------------------------
  * Library-wide, not per-kit: a sample rejected here is skipped by every
  * future Assign / re-roll; a favourite is weighted up. Stored as two flat
  * lists of filesystem paths so the engine can use them as Sets directly. */
@@ -261,12 +262,13 @@ export function savePrefs(rejects, favourites) {
     } catch (e) { return false; }
 }
 
-/* ---- MrDrums export (spec §16, §3.3, §24) ------------------------- */
+/* ---- Move drum preset export (spec §16, §3.3, §24) -------------- */
 
 /*
  * exportMrDrums(kit, name) -> { ok, path, warnings, errors, padCount }
- * Writes a MrDrums-loadable .ablpreset into Move's Track Presets folder. The
- * Kit Builder save is independent of this — an export failure never touches it.
+ * Writes a native Move drum-rack preset (.ablpreset) into Move's Track Presets
+ * folder — loadable by Move itself and by MrDrums. The Kit Builder save is
+ * independent of this: an export failure never touches it.
  */
 export function exportMrDrums(kit, name) {
     hMkdir(MRDRUMS_EXPORT_DIR);
