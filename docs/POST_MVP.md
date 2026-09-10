@@ -145,15 +145,14 @@ Rescan. Default: skip loops on, no size cap. SYSTEM page shows both toggles
 and a `Cut nL nB` line. Narrow opt-out heuristic — not the general "filename
 tag filters" idea still parked in Not planned.
 
-### F2. Enrich the classifier alias table  ·  **done**
+### F2. Enrich the classifier alias table  ·  **done** (extended by Batch G)
 `role_rules.*.folder_aliases` in `sample_index.DEFAULT_CONFIG` + both
-`kit_config.json` copies expanded with the generator's vocabulary, mapped to
-our 7 roles and normalised (singular+plural since matching is exact, no
-stemming): rim/rimshot/sidestick → snare, hand clap → clap, ohh/chh + generic
-hat(s)/hihat(s) → open/closed hat (generic → closed), tom/conga/shaker/
-tambourine/cowbell/agogo/woodblock/triangle/… → percussion, riser/sweep/
-impact/noise/foley/glitch/transition → fx. Still folder-component matching
-(spec §7.2) — filenames are untouched.
+`kit_config.json` copies expanded with the generator's vocabulary, normalised
+singular+plural (matching is exact, no stemming). Batch F did this against the
+original 7 roles; Batch G then took it to the full 22-category set (rim / tom /
+conga / crash / ride / cymbal / hat split out, melodic vox/bass/synth/stab/
+chord/lead/pad added). Still folder-component matching (spec §7.2) — filenames
+untouched.
 
 ### F3. WAV metadata stripping  ·  **done**
 `src/core/wav_strip.mjs`: `stripWav(bytes)` keeps only `fmt `/`fact`/`data`,

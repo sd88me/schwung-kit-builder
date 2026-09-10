@@ -81,10 +81,12 @@ fail-flash) so they never touch the persisted model.
 `random_assign.assignKit()` is pure and never mutates the input kit — it returns
 a proposed 16-pad array plus a report, and the caller commits it as one
 transaction (§10.3). `mulberry32` PRNG; unlocked pads resolved in **ascending
-pad-number order** (§10.2, decision 4); primary→fallback role pools; duplicate
-prevention counts locked-pad samples as used and reports a relaxation when a pool
-runs dry; the pad's current sample is dropped from its own pool when alternatives
-exist. A role with no candidate leaves that pad untouched and the kit stays valid.
+pad-number order** (§10.2, decision 4). Rev. 3: each pad's pool is the **union**
+of the categories in `config.pad_layout[i]` (the `["other"]` sentinel expands to
+every unslotted category + `fx`); no fallback chain. Duplicate prevention counts
+locked-pad samples as used and reports a relaxation when a pool runs dry; the
+pad's current sample is dropped from its own pool when alternatives exist. An
+empty pool leaves that pad unresolved and the kit stays valid.
 
 ### Sample scan is chunked, pumped from `tick()`
 `sample_index.createScan()` returns a pump; `tick()` calls `step(400)` per frame

@@ -135,11 +135,11 @@ export function commitKitNumber(used) {
 export function sanitizeFilename(name) {
     let s = String(name == null ? '' : name);
     s = s.replace(/[\u0000-\u001f\u007f]/g, '');   // control characters
-    s = s.replace(/\.{2,}/g, '.');                    // path-traversal runs
-    s = s.replace(/[\/\\]/g, '');                   // path separators
-    s = s.replace(/[<>:"|?*]/g, '_');                 // invalid filename chars
-    s = s.replace(/^[.\s]+|\s+$/g, '');              // trim leading dot/space, trailing space
-    if (!s) s = 'Kit Builder';                        // fallback
+    s = s.replace(/[\/\\]/g, '');                   // path separators — first, so
+    s = s.replace(/\.{2,}/g, '.');                  // then "../.." collapses to one dot
+    s = s.replace(/[<>:"|?*]/g, '_');               // invalid filename chars
+    s = s.replace(/^\s+|\s+$/g, '');                // trim surrounding whitespace only
+    if (!s || /^\.+$/.test(s)) s = 'Kit Builder';   // empty or dots-only -> fallback
     return s;
 }
 
