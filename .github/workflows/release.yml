@@ -10,6 +10,11 @@ on:
   push:
     tags: ['v*']
 
+# The default GITHUB_TOKEN is read-only; creating a release (and generating its
+# notes) needs write access to repository contents.
+permissions:
+  contents: write
+
 env:
   MODULE_ID: kit-builder
 
