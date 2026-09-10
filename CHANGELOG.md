@@ -2,6 +2,43 @@
 
 All notable changes to Kit Builder are recorded here.
 
+## [0.3.0] — unreleased
+
+Batch E — engine v2. `module.json` / `release.json` still say 0.2.0; bump on
+device verification.
+
+### E1 — automatic loudness matching
+
+- The DSP loader thread measures each decoded slot's RMS (fraction of full
+  scale) and reports all 16 via `get_param("loudness")`.
+- `src/core/loudness.mjs` (pure): `matchGains()` turns the readings into a
+  per-pad makeup gain that pulls every non-silent pad toward the median
+  level, clamped to the kit model's 0.25–2.0 range. Empty slots stay at 1.0.
+- **RANDOM page → "Match Levels"** (6th action; step button 6). Applies the
+  gains to every assigned pad's `playback.gain` + the DSP `slot_gain`, and
+  persists. A manual Knob-5 trim afterwards still overrides.
+- Tests: `test_loudness.js` (6).
+
+### E2 — audition step sequencer
+
+- Internal 16-step clock in the DSP, tempo from the host's global BPM
+  (`move_plugin_init_v2` now keeps the `host_api` pointer). One 16-bit lane
+  per pad; `render_block` advances the step accumulator and fires each step's
+  lanes through a shared `trigger_slot()`. Fixed 16 steps, no swing.
+- **Foreground gate:** the UI pumps a `seq_fg` heartbeat each tick; without
+  one for ~30 render blocks the sequencer pauses and resets to step 1, so a
+  parked tool falls silent.
+- **Rec button** toggles the pattern-edit view (LED stays lit). **Play
+  button** runs / stops — independent of the view, so you can leave edit mode
+  with it still playing. In edit mode the 16 step buttons toggle the selected
+  pad's lane (Knob 1 picks the pad), the step LEDs show the grid + a walking
+  playhead, and a full-screen SEQ readout replaces the page.
+- `onResume` brings the sequencer back **stopped at step 1**, keeping the
+  pattern; `New` clears it. The pattern is transient — not saved, not
+  exported (spec §28 first cut).
+- DSP params: `set_param` `seq_run` / `seq_lane_<N>` / `seq_clear` / `seq_fg`;
+  `get_param "seq"` → `"<run> <step>"`.
+
 ## [0.2.0] — unreleased
 
 Post-MVP work — see [`docs/POST_MVP.md`](docs/POST_MVP.md) for the batch plan.
