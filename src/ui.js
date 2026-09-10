@@ -881,6 +881,10 @@ globalThis.onMidiMessageInternal = function (data) {
                     const dir = d1 === MoveDown ? 1 : -1;
                     exportSel = (exportSel + dir + EXPORT_ROWS.length) % EXPORT_ROWS.length;
                     needsRedraw = true;
+                } else if (d2 > 0 && PAGES[pageIndex] === 'SYSTEM') {
+                    /* Scroll the index-report list. */
+                    sysScroll += (d1 === MoveDown ? 1 : -1);
+                    needsRedraw = true;
                 }
                 return;
 
@@ -919,6 +923,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (next !== scanPrefs.skip_loops) {
                         scanPrefs.skip_loops = next;
                         saveScanPrefs(scanPrefs);
+                        sysScroll = 0;   // bring the Loop-filter row into view
                         footer = `Loops: ${next ? 'skip' : 'keep'} — Rescan to apply`;
                         needsRedraw = true;
                     }
@@ -941,6 +946,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (nextCap !== scanPrefs.max_sample_size) {
                         scanPrefs.max_sample_size = nextCap;
                         saveScanPrefs(scanPrefs);
+                        sysScroll = 0;   // bring the Max-size row into view
                         footer = `Max sample: ${scanSizeLabel()} — Rescan to apply`;
                         needsRedraw = true;
                     }
@@ -1106,24 +1112,53 @@ function drawKitPage() {
     }
 }
 
-function drawSystemPage() {
-    /* No footer here — the whole area is the index report. Knob 1 toggles the
-     * loop filter, knob 2 cycles the size cap (Batch F); both persist and
-     * apply on the next Rescan. Category counts are the 8 Rev. 3 buckets plus
-     * a catch-all Other (melodic + unclassified). */
+/* SYSTEM page rows below the fixed header. Up/Down scroll a 4-line window.
+ * Rows 1 & 2 are the knob-1 / knob-2 controls (loop filter / size cap). */
+const SYS_VISIBLE = 4;
+let sysScroll = 0;
+
+function systemRows() {
     const s = indexSummary;
+    return [
+        `Indexed  ${s.indexed}`,
+        `Loop filter  ${scanPrefs.skip_loops ? 'skip' : 'keep'}`,   // knob 1
+        `Max size  ${scanSizeLabel()}`,                             // knob 2
+        `Cut  ${s.skippedLoops || 0} loop / ${s.skippedOversize || 0} big`,
+        `Kick  ${s.kick}`,
+        `Snare  ${s.snare}`,
+        `Clap  ${s.clap}`,
+        `Hats  ${s.hats}`,
+        `Toms  ${s.toms}`,
+        `Perc  ${s.perc}`,
+        `Cymbals  ${s.cym}`,
+        `FX  ${s.fx}`,
+        `Other  ${s.other}`
+    ];
+}
+
+function sysScrollClamp(rows) {
+    const max = Math.max(0, rows.length - SYS_VISIBLE);
+    if (sysScroll < 0) sysScroll = 0;
+    if (sysScroll > max) sysScroll = max;
+}
+
+function drawSystemPage() {
+    /* Fixed header (RESCAN / Age / Src) + a scrollable list — Up/Down move the
+     * 4-row window. Knob 1 = loop filter, knob 2 = size cap (persist, apply on
+     * the next Rescan). Category counts are the 8 Rev. 3 buckets + Other. */
     const scanning = !!scan;
-    const c2 = 46, c3 = 86;
     button(MX, 13, 46, 12, scanning ? 'SCAN' : 'RESCAN', assignHeld && !scanning);
     line(MX + 52, 13, `Age ${indexAgeText}`);
     line(MX + 52, 21, `Src ${SOURCE_LABEL[sourceMode]}`);
-    line(MX, 29, `Idx ${s.indexed}`);
-    line(56, 29, `Cut ${s.skippedLoops || 0}L ${s.skippedOversize || 0}B`);
-    line(MX, 37, `Loop ${scanPrefs.skip_loops ? 'skip' : 'keep'}`);
-    line(64, 37, `Max ${scanSizeLabel()}`);
-    line(MX, 45, `Kck ${s.kick}`);  line(c2, 45, `Snr ${s.snare}`);  line(c3, 45, `Clp ${s.clap}`);
-    line(MX, 52, `Hat ${s.hats}`);  line(c2, 52, `Tom ${s.toms}`);   line(c3, 52, `Prc ${s.perc}`);
-    line(MX, 59, `Cym ${s.cym}`);   line(c2, 59, `FX ${s.fx}`);      line(c3, 59, `Oth ${s.other}`);
+
+    const rows = systemRows();
+    sysScrollClamp(rows);
+    for (let i = 0; i < SYS_VISIBLE; i++) {
+        const r = rows[sysScroll + i];
+        if (r != null) line(MX, 30 + i * 8, r);
+    }
+    if (sysScroll > 0) line(RX - 6, 30, '^');
+    if (sysScroll < rows.length - SYS_VISIBLE) line(RX - 6, 30 + (SYS_VISIBLE - 1) * 8, 'v');
 }
 
 function drawExportPage() {

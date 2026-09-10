@@ -46,9 +46,9 @@ export const tests = [
         ], 'Kit A'));
         eq(padCount, 3);
         eq(manifest.map((m) => m.pad), [1, 2, 16]);
-        assert(text.includes('<SampleName>Kit_A-01-Big_Kick</SampleName>'), 'pad 1 name');
-        assert(text.includes('<SampleName>Kit_A-02-snare_1</SampleName>'), 'pad 2 name');
-        assert(text.includes('<SampleName>Kit_A-16-zap</SampleName>'), 'pad 16 name');
+        assert(text.includes('<SampleName>Big Kick</SampleName>'), 'pad 1 name = source basename');
+        assert(text.includes('<SampleName>snare 1</SampleName>'), 'pad 2 name');
+        assert(text.includes('<SampleName>zap</SampleName>'), 'pad 16 name');
         // template's first-instrument sample name must be gone
         assert(!text.includes('PRGKIT26BD1'), 'template placeholder leaked');
         // an unassigned pad (3) keeps an empty name
@@ -77,10 +77,12 @@ export const tests = [
         assert(text.includes('}</ProgramPads-v2.10>\r\n'), 'progpads closes with CRLF');
     }},
 
-    { name: 'mpcSampleName: no extension, safe chars, capped, pad-numbered', fn() {
-        eq(mpcSampleName('Kit A', 3, 'Deep Kick 01.wav'), 'Kit_A-03-Deep_Kick_01');
-        eq(mpcSampleName('K', 12, 'a/b\\c.aif'), 'K-12-c');
-        assert(mpcSampleName('very long kit name here', 1, 'and a very long sample name too.wav').length <= 42);
+    { name: 'mpcSampleName: source basename only, no extension, spaces kept, capped', fn() {
+        eq(mpcSampleName('Deep Kick 01.wav'), 'Deep Kick 01');
+        eq(mpcSampleName('a/b\\c.aif'), 'c');                    // basename, ext dropped
+        eq(mpcSampleName('Kick (Hard).wav'), 'Kick (Hard)');     // spaces + parens kept
+        eq(mpcSampleName('808 Boom!.wav'), '808 Boom');          // unsafe punctuation -> _, trailing trimmed
+        assert(mpcSampleName('a really quite long sample name that runs past the forty-two cap.wav').length <= 42);
     }},
 
     { name: 'exportXpm writes .xpm + MANIFEST, makes the folder, reports path', fn() {
@@ -99,8 +101,8 @@ export const tests = [
         assert(FS.has('/exp/MPC/RT Kit/MANIFEST.txt'));
         const man = FS.get('/exp/MPC/RT Kit/MANIFEST.txt');
         assert(man.includes('place each source file'), 'manual-gather header');
-        assert(man.includes('RT_Kit-01-k.wav\t/data/UserData/UserLibrary/Samples/Kick/k.wav'));
-        assert(man.includes('RT_Kit-05-ch.wav\t/data/UserData/UserLibrary/Samples/Closed Hat/ch.wav'));
+        assert(man.includes('k.wav\t/data/UserData/UserLibrary/Samples/Kick/k.wav'));
+        assert(man.includes('ch.wav\t/data/UserData/UserLibrary/Samples/Closed Hat/ch.wav'));
         assert(!man.includes('[gathered]'), 'no gather tags without copy()');
     }},
 
@@ -109,7 +111,7 @@ export const tests = [
         kit.pads[2].sample = sampleFromRecord(rec('Other', 'noext'));   // no dot in name
         const { manifest } = buildXpm(kit);
         eq(manifest.map((m) => m.ext), ['.wav', '.aif', '.wav']);
-        eq(manifest.map((m) => m.destName), ['Ext-01-bd.wav', 'Ext-02-shk.aif', 'Ext-03-noext.wav']);
+        eq(manifest.map((m) => m.destName), ['bd.wav', 'shk.aif', 'noext.wav']);
     }},
 
     { name: 'exportXpm with copy() gathers each sample beside the .xpm', fn() {
@@ -124,13 +126,13 @@ export const tests = [
         eq(r.gathered, 2);
         eq(r.warnings.length, 0);
         eq(COPIES, [
-            ['/data/UserData/UserLibrary/Samples/Kick/k.wav', '/exp/MPC/G Kit/G_Kit-01-k.wav'],
-            ['/data/UserData/UserLibrary/Samples/Closed Hat/ch.wav', '/exp/MPC/G Kit/G_Kit-05-ch.wav']
+            ['/data/UserData/UserLibrary/Samples/Kick/k.wav', '/exp/MPC/G Kit/k.wav'],
+            ['/data/UserData/UserLibrary/Samples/Closed Hat/ch.wav', '/exp/MPC/G Kit/ch.wav']
         ]);
         const man = FS.get('/exp/MPC/G Kit/MANIFEST.txt');
         assert(man.includes('were copied next to this .xpm'), 'gathered header');
-        assert(man.includes('G_Kit-01-k.wav\t/data/UserData/UserLibrary/Samples/Kick/k.wav\t[gathered]'));
-        assert(man.includes('G_Kit-05-ch.wav\t/data/UserData/UserLibrary/Samples/Closed Hat/ch.wav\t[gathered]'));
+        assert(man.includes('k.wav\t/data/UserData/UserLibrary/Samples/Kick/k.wav\t[gathered]'));
+        assert(man.includes('ch.wav\t/data/UserData/UserLibrary/Samples/Closed Hat/ch.wav\t[gathered]'));
     }},
 
     { name: 'exportXpm: a failed copy is non-fatal — warned + tagged MISSING', fn() {
@@ -145,8 +147,8 @@ export const tests = [
         eq(r.gathered, 1);
         assert(r.warnings.some((w) => w.indexOf('could not copy') !== -1 && w.indexOf('sn.wav') !== -1), r.warnings.join('|'));
         const man = FS.get('/exp/MPC/P Kit/MANIFEST.txt');
-        assert(man.includes('P_Kit-01-k.wav\t') && man.includes('[gathered]'));
-        assert(/P_Kit-02-sn\.wav\t.*\[MISSING/.test(man), man);
+        assert(man.includes('k.wav\t') && man.includes('[gathered]'));
+        assert(/sn\.wav\t.*\[MISSING/.test(man), man);
     }},
 
     { name: 'exportXpm: non-.wav source warns (MPC wants a .wav beside the .xpm)', fn() {
@@ -158,7 +160,7 @@ export const tests = [
         });
         assert(r.ok);
         eq(r.gathered, 1);
-        assert(r.warnings.some((w) => w.indexOf('.aiff') !== -1 && w.indexOf('A_Kit-01-boom.wav') !== -1), r.warnings.join('|'));
+        assert(r.warnings.some((w) => w.indexOf('.aiff') !== -1 && w.indexOf('boom.wav') !== -1), r.warnings.join('|'));
     }},
 
     { name: 'manifestText: attempted vs manual header + tags', fn() {
@@ -180,9 +182,11 @@ export const tests = [
     }},
 
     { name: 'duplicate sample on two pads still yields distinct SampleNames', fn() {
-        const { text } = buildXpm(kitWith([[0, 'Kick', 'k.wav'], [1, 'Kick', 'k.wav']], 'Dup'));
-        const names = (text.match(/<SampleName>Dup-[^<]+<\/SampleName>/g) || []);
+        const { text, manifest } = buildXpm(kitWith([[0, 'Kick', 'boom.wav'], [1, 'Kick', 'boom.wav']], 'Dup'));
+        const names = manifest.map((m) => m.sampleName);
         eq(names.length, 2);
-        assert(names[0] !== names[1], names.join(' == '));
+        assert(names[0] === 'boom', names[0]);
+        assert(names[0] !== names[1], names.join(' == '));    // 2nd disambiguated (e.g. "boom 2")
+        for (const nm of names) assert(text.includes(`<SampleName>${nm}</SampleName>`), `missing ${nm}`);
     }}
 ];

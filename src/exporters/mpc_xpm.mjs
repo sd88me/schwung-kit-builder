@@ -13,10 +13,11 @@
  * Everything else — per-pad envelopes, filters, LFO, pad colours in
  * <ProgramPads-v2.10> — is kept byte-for-byte from the reference.
  *
- * Samples are referenced by bare name; the MPC loads `<SampleName>.wav` from
- * the .xpm's own folder. When the caller supplies copy(src, dest) the export
- * gathers each source file into that folder as `<SampleName><ext>`; otherwise
- * (and for any copy that fails) MANIFEST.txt lists what to place by hand.
+ * Samples are referenced by their own basename (extension dropped, made
+ * filesystem/XML-safe); the MPC loads `<SampleName>.wav` from the .xpm's own
+ * folder. When the caller supplies copy(src, dest) the export gathers each
+ * source file into that folder as `<SampleName><ext>`; otherwise (and for any
+ * copy that fails) MANIFEST.txt lists what to place by hand.
  * `<SliceEnd>` is left 0 (whole-sample one-shot, as the template's unused
  * layers are) — revisit if an MPC truncates playback.
  *
@@ -37,8 +38,9 @@ function slug(s) {
     const t = String(s == null ? '' : s)
         .replace(/^.*[\/\\]/, '')                 // keep basename only
         .replace(/\.[^.]+$/, '')                  // drop extension
-        .replace(/[^A-Za-z0-9_-]+/g, '_')
-        .replace(/^_+|_+$/g, '');
+        .replace(/[^A-Za-z0-9 ()_-]+/g, '_')      // keep spaces + parens; other punctuation -> _
+        .replace(/\s+/g, ' ')                     // collapse whitespace runs
+        .replace(/^[ _-]+|[ _-]+$/g, '');
     return t || 'sample';
 }
 
@@ -46,11 +48,13 @@ function xmlEscape(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/* MPC-safe sample name: "<kit>-<NN>-<file>", no extension, capped. */
-export function mpcSampleName(kitName, pad, filename) {
-    const nn = String(pad).padStart(2, '0');
-    let name = `${slug(kitName)}-${nn}-${slug(filename)}`;
-    if (name.length > NAME_MAX) name = name.slice(0, NAME_MAX).replace(/[_-]+$/, '');
+/* MPC sample name = the source file's own basename, extension dropped,
+ * filesystem/XML-safe (spaces kept), capped at NAME_MAX. The MPC loads
+ * "<SampleName>.wav" from the .xpm's folder, so the gathered copy is named to
+ * match. Duplicate names across pads are disambiguated in buildXpm(). */
+export function mpcSampleName(filename) {
+    let name = slug(filename);
+    if (name.length > NAME_MAX) name = name.slice(0, NAME_MAX).replace(/[ _-]+$/, '');
     return name;
 }
 
@@ -107,8 +111,8 @@ export function buildXpm(kit) {
         if (n <= KIT_PADS) {
             const p = pads[n - 1];
             if (p && p.sample && p.sample.filesystem_path) {
-                sn = mpcSampleName(name, n, p.sample.filename || p.sample.filesystem_path);
-                if (seen[sn]) sn = (sn + '_' + n).slice(0, NAME_MAX);
+                sn = mpcSampleName(p.sample.filename || p.sample.filesystem_path);
+                if (seen[sn]) sn = (sn + ' ' + n).slice(0, NAME_MAX);
                 seen[sn] = true;
                 const fs = p.sample.filesystem_path;
                 if (fs.charAt(0) !== '/') warnings.push(`pad ${n}: sample path is not absolute`);
