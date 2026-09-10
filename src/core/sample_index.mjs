@@ -35,6 +35,9 @@ export const DEFAULT_CONFIG = {
     supported_extensions: ['.wav', '.aif', '.aiff'],
     /* Batch F — opt-in scan filters (SYSTEM-page knobs persist overrides). */
     scan_filters: { skip_loops: true, max_sample_size: null },
+    /* Rev. 3.x — when a folder path doesn't classify a sample, fall back to a
+     * keyword match on its filename. Set false to keep folder-only (§7.2). */
+    classify_filenames: true,
     /* Rev. 3 — classification vocabulary (folder aliases only; pad placement
      * lives in `pad_layout`). Adopted from the drum-kit-generator category set.
      * Order matters: buildAliasIndex is first-writer-wins, so `shaker` (listed
@@ -164,6 +167,7 @@ export function createScan(config) {
     const exts = (cfg.supported_extensions || []).map((e) => String(e).toLowerCase());
     const aliasIndex = buildAliasIndex(cfg.role_rules);
     const scanFilter = makeScanFilter(cfg);
+    const useFilenames = cfg.classify_filenames !== false;
 
     /* Index BOTH libraries that exist on disk; assignKit filters by the
      * user's chosen Source at pick time. */
@@ -234,7 +238,7 @@ export function createScan(config) {
                 const rel = full.slice(root.prefix.length + 1);
                 const parts = rel.split('/');
                 const dirParts = parts.slice(0, -1);
-                const role = classify(dirParts, aliasIndex);
+                const role = classify(dirParts, aliasIndex, useFilenames ? name : undefined);
                 const mapped = toAbletonUri(full);
 
                 state.records.push({

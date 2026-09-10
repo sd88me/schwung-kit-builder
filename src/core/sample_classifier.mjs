@@ -1,9 +1,9 @@
 /*
- * Kit Builder — folder-based sample classification (spec §7.2)
+ * Kit Builder — sample classification (spec §7.2)
  *
  * Pure module: no `os`, no `host_*`. Unit-tested by tests/test_classifier.js.
  *
- * Folder matching (§7.2):
+ * Folder matching (§7.2) is primary:
  *  - case-insensitive
  *  - leading/trailing whitespace ignored
  *  - spaces, underscores and hyphens are equivalent  → we strip them all, so
@@ -11,6 +11,11 @@
  *  - any directory component may match, not only the immediate parent
  *  - deepest (most nested) matching component wins  (Rev. 2, decision 5)
  *  - exactly one primary category per sample; unmatched → "other" (§7.3)
+ *
+ * Filename fallback (Rev. 3.x, config `classify_filenames`, default on): when
+ * the folder path yields nothing, classifyFilename() does a best-effort
+ * token-exact keyword match on the file's own name. Folder structure always
+ * wins over the filename.
  */
 
 /* lowercase, trim, then remove every space / underscore / hyphen */
@@ -41,18 +46,57 @@ export function buildAliasIndex(roleRules) {
 }
 
 /*
- * Classify one sample from the directory components between the sample root and
- * the file (filename NOT included). Walks shallow -> deep so the deepest match
- * wins. Returns a role name, or 'other' when nothing matches.
- *
- *   classify(['Percussion', 'Closed Hat'], idx) -> 'closed_hat'   (not 'percussion')
- *   classify(['Textures'], idx)                  -> 'other'
+ * Split a filename into lowercase alphanumeric tokens: drop the directory and
+ * extension, break camelCase and letter/digit boundaries, split on every other
+ * separator. "Deep_Kick_01.wav" -> ["deep","kick","01"].
  */
-export function classify(dirComponents, aliasIndex) {
+export function tokenizeFilename(name) {
+    return String(name == null ? '' : name)
+        .replace(/^.*[\/\\]/, '')                 // basename only
+        .replace(/\.[^.]+$/, '')                  // drop extension
+        .replace(/([a-z])([A-Z])/g, '$1 $2')      // camelCase
+        .replace(/([A-Za-z])(\d)/g, '$1 $2')      // letter|digit
+        .replace(/(\d)([A-Za-z])/g, '$1 $2')
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean);
+}
+
+/*
+ * Fallback classification from the filename alone (used only when the folder
+ * path yields nothing — spec §7.2 Rev. 3.x). Best-effort keyword match: try
+ * contiguous joins of up to 3 tokens, longest window first (so "open hat"
+ * beats bare "hat"), first hit wins. Token-exact against the alias index — no
+ * substrings, so "bassline" does NOT match "bass". Returns 'other' on no hit.
+ */
+export function classifyFilename(filename, aliasIndex) {
+    const toks = tokenizeFilename(filename);
+    for (let win = Math.min(3, toks.length); win >= 1; win--) {
+        for (let i = 0; i + win <= toks.length; i++) {
+            const hit = aliasIndex.get(toks.slice(i, i + win).join(''));
+            if (hit) return hit;
+        }
+    }
+    return 'other';
+}
+
+/*
+ * Classify one sample. `dirComponents` are the directory names between the
+ * sample root and the file (filename NOT included); walked shallow -> deep so
+ * the deepest folder match wins. When that yields 'other' and `filename` is
+ * given, fall back to classifyFilename(). Returns a role name, or 'other'.
+ *
+ *   classify(['Percussion', 'Closed Hat'], idx)              -> 'closed_hat'
+ *   classify(['One Shots'], idx, 'punchy_kick_01.wav')       -> 'kick'
+ *   classify(['Kicks'], idx, 'snare_layer.wav')              -> 'kick'  (folder wins)
+ *   classify(['Textures'], idx)                              -> 'other'
+ */
+export function classify(dirComponents, aliasIndex, filename) {
     let role = 'other';
     for (const comp of dirComponents || []) {
         const hit = aliasIndex.get(normalizeToken(comp));
         if (hit) role = hit; // keep going: a deeper component may override
     }
+    if (role === 'other' && filename) role = classifyFilename(filename, aliasIndex);
     return role;
 }

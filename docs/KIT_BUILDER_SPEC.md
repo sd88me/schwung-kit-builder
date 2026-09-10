@@ -25,7 +25,12 @@
 2. **Pad placement moved to `config.pad_layout`** — an array of 16 category lists. Each pad draws from the **union** of its list, picked uniformly. `role_rules[*].pads` and `role_rules[*].fallback_roles` are removed; there is no fallback chain — an empty pool leaves the pad empty (§10.3 unchanged). See §7.4, §10.2.
 3. **The `["other"]` layout sentinel** expands to every category with no dedicated pad slot (the melodic set `vox bass synth stab chord lead pad` plus `other`), **plus `fx`** — so `fx` sits on pad 12 *and* can land on the catch-all pads 13–16. See §7.4.
 4. **`pad.role`** is retained for display/compat and holds the pad's *primary* category (first in its pool). Older kits load unchanged.
-5. **SYSTEM page** shows 8 grouped buckets (Kick / Snr / Clap / Hats / Tom / Perc / Cym / FX) plus a combined Other. See §13.4.
+5. **SYSTEM page** shows 8 grouped buckets (Kick / Snr / Clap / Hats / Tom / Perc / Cym / FX) plus a combined Other, in a scrollable list. See §13.4.
+
+**Rev. 3.x — 2026-09-10.** Follow-ups from device testing:
+
+6. **Filename fallback for classification** — `classify_filenames` (default on): a token-exact keyword match on the file's own name when the folder path classifies it as `other`. Folder still wins. See §7.2.
+7. **MPC `.xpm` sample names** are the source file's own basename (was `<kit>-<NN>-<name>`). See §16 / `mpc_xpm.mjs`.
 
 ---
 
@@ -366,6 +371,14 @@ For example, each of these should classify as `open_hat`:
 /Drums/Open-Hat/sample.wav
 /OPEN_HIHAT/hihat.wav
 ```
+
+**Filename fallback** *(Rev. 3.x — config `classify_filenames`, default on)*: when
+the folder path yields no category, the file's own name is tokenised
+(separators, camelCase and letter/digit boundaries → lowercase tokens) and
+matched against the same alias index — contiguous joins of up to 3 tokens,
+longest window first, first hit wins. Token-exact (no substrings, so
+`bassline.wav` is **not** `bass`). Folder structure always wins over the
+filename. `classifyFilename()` in `sample_classifier.mjs`.
 
 ### 7.3 Other category
 

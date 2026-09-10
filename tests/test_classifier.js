@@ -2,11 +2,14 @@
  * Folder-role classification (spec §7.2, §22).
  */
 import { assert, eq } from './run.js';
-import { normalizeToken, buildAliasIndex, classify } from '../src/core/sample_classifier.mjs';
+import {
+    normalizeToken, buildAliasIndex, classify, tokenizeFilename, classifyFilename
+} from '../src/core/sample_classifier.mjs';
 import { DEFAULT_CONFIG } from '../src/core/sample_index.mjs';
 
 const idx = buildAliasIndex(DEFAULT_CONFIG.role_rules);
 const role = (parts) => classify(parts, idx);
+const fname = (n) => classifyFilename(n, idx);
 
 export const tests = [
     { name: 'normalizeToken strips case and separators', fn() {
@@ -107,5 +110,41 @@ export const tests = [
     { name: 'a nested subfolder under a recognised category keeps that category, not other', fn() {
         // §7.3: not "other" merely for being nested under a recognised category
         eq(role(['Kick', 'Vinyl']), 'kick');
+    }},
+
+    { name: 'tokenizeFilename splits separators, camelCase, letter/digit', fn() {
+        eq(tokenizeFilename('Deep_Kick_01.wav'), ['deep', 'kick', '01']);
+        eq(tokenizeFilename('OpenHat07.aif'), ['open', 'hat', '07']);
+        eq(tokenizeFilename('808-boom.wav'), ['808', 'boom']);
+        eq(tokenizeFilename('/a/b/CLSNAkd12.WAV'), ['clsnakd', '12']);
+    }},
+
+    { name: 'classifyFilename: token-exact keyword match, longest window first', fn() {
+        eq(fname('punchy_kick_01.wav'), 'kick');
+        eq(fname('open_hat_loop_120.wav'), 'open_hat');   // "open hat" beats bare "hat"
+        eq(fname('closed_hh_01.wav'), 'closed_hat');
+        eq(fname('chh_2.wav'), 'closed_hat');
+        eq(fname('RideCymbal.wav'), 'ride');              // first hit (ride) wins
+        eq(fname('sub_bass_c.wav'), 'bass');
+        eq(fname('vox_chop.wav'), 'vox');
+    }},
+
+    { name: 'classifyFilename: no substring false positives', fn() {
+        eq(fname('bassline_riff.wav'), 'other');   // "bassline" != "bass"
+        eq(fname('kickstart.wav'), 'other');        // "kickstart" != "kick"
+        eq(fname('whatever_99.wav'), 'other');
+    }},
+
+    { name: 'classify: folder wins; filename only rescues an "other" folder', fn() {
+        // folder classifies -> filename ignored
+        eq(classify(['Kicks'], idx, 'snare_layer.wav'), 'kick');
+        eq(classify(['Percussion'], idx, 'kick_thump.wav'), 'percussion');
+        // folder is "other" -> filename rescues
+        eq(classify(['One Shots'], idx, 'punchy_kick_01.wav'), 'kick');
+        eq(classify(['Unsorted', 'Bits'], idx, 'clap_fat.wav'), 'clap');
+        // neither -> other
+        eq(classify(['One Shots'], idx, 'mystery_99.wav'), 'other');
+        // no filename arg (toggle off) -> folder-only, current behaviour
+        eq(classify(['One Shots'], idx), 'other');
     }},
 ];

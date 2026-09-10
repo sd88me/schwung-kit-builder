@@ -9,6 +9,7 @@
     "skip_loops": true,
     "max_sample_size": null
   },
+  "classify_filenames": true,
   "role_rules": {
     "kick":       { "folder_aliases": ["kick", "kicks", "kck", "bd", "bass drum"] },
     "snare":      { "folder_aliases": ["snare", "snares", "snr", "sd"] },
