@@ -11,12 +11,6 @@ presets, so it loads in Move directly and, being the identical file, in
 [MrDrums](https://github.com/handcraftedcc/schwung-mrdrums) as well. An optional
 Akai MPC `.xpm` exporter is available alongside it.
 
-- Technical specification: [`docs/KIT_BUILDER_SPEC.md`](docs/KIT_BUILDER_SPEC.md)
-- Implementation decisions + format comparison: [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md)
-- Backlog: [`docs/POST_MVP.md`](docs/POST_MVP.md)
-- Full change history: [`CHANGELOG.md`](CHANGELOG.md)
-
-Current release: **v0.3.1**.
 
 ## Features
 
