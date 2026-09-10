@@ -398,7 +398,9 @@ function shortName(name, max) {
 
 function onPadPress(index, velocity) {
     const p = kit.pads[index];
+    const padChanged = index !== selectedPad;
     selectedPad = index;   // KIT page follows the last-touched pad
+    if (seqMode && padChanged) seqRepaintSteps();   // step LEDs follow the tapped pad's lane
     if (!shiftHeld) heldPad = index;   // hold pad + Assign = re-roll just this pad
     if (shiftHeld) {
         /* Shift + Pad -> toggle lock (spec §11.2 / §11.3). No trigger. */
@@ -649,10 +651,11 @@ function toggleSeqMode() {
     if (seqMode) {
         pageIndex = PAGES.indexOf('KIT');
         footer = `Seq: pad ${selectedPad + 1} — steps edit, Play runs`;
+        seqRepaintSteps();     // show this pad's lane right away
     } else {
         footer = seqRunning ? 'Seq running (Rec to edit)' : 'Seq edit closed';
     }
-    requestFullLedRepaint();   // step LEDs switch between grid and action colours
+    requestFullLedRepaint();   // step LEDs switch between grid and action colours; Rec/Play/pads
     needsRedraw = true;
 }
 
@@ -679,8 +682,15 @@ function seqToggleStep(st) {
     if (st < 0 || st > 15) return;
     seqPattern[selectedPad] ^= (1 << st);
     dspSet('seq_lane_' + selectedPad, String(seqPattern[selectedPad]));
-    paintStepLeds();
+    seqRepaintSteps();
     needsRedraw = true;
+}
+
+/* Force-repaint the 16 step LEDs for the current pad's lane — used whenever
+ * `selectedPad` changes in edit mode (knob OR pad press), so the cache can
+ * never suppress the switch. */
+function seqRepaintSteps() {
+    for (let i = 0; i < MoveSteps.length; i++) setLED(MoveSteps[i], stepLedColor(i), true);
 }
 
 /* Clear the whole pattern + stop (called by New). */
@@ -1011,9 +1021,12 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (seqMode) {
                     /* Pick the pad whose 16-step lane the step buttons edit. */
                     const dir = delta > 0 ? 1 : -1;
-                    selectedPad = Math.max(0, Math.min(PAD_COUNT - 1, selectedPad + dir));
-                    paintStepLeds();
-                    needsRedraw = true;
+                    const np = Math.max(0, Math.min(PAD_COUNT - 1, selectedPad + dir));
+                    if (np !== selectedPad) {
+                        selectedPad = np;
+                        seqRepaintSteps();
+                        needsRedraw = true;
+                    }
                     return;
                 }
 
