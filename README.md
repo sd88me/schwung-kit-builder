@@ -73,7 +73,7 @@ kept, silent); **Shift + Back** exits.
 ### RANDOM page
 
 **Up/Down** (or **step buttons 1–6**, colour-coded) select an action;
-**jog press** — or a second step-button press within ~0.4 s — fires it:
+**jog press** (or a **double click step-button** press within ~0.4 s) — fires it:
 
 - **Assign** — fill every unlocked pad with a random sample of its pool
   (ascending pad order, no duplicates, avoids each pad's current sample; seeded
