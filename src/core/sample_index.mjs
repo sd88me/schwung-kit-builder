@@ -12,6 +12,8 @@
 import * as os from 'os';
 import { toAbletonUri } from './path_mapping.mjs';
 import { buildAliasIndex, classify } from './sample_classifier.mjs';
+import { makeScanFilter } from './scan_filters.mjs';
+import { DEFAULT_PAD_LAYOUT } from './kit_model.mjs';
 
 /* Writable Kit Builder data area (§8.3, §15). */
 export const KB_DIR = '/data/UserData/UserLibrary/KitBuilder';
@@ -31,20 +33,60 @@ export const DEFAULT_CONFIG = {
         core: '/data/CoreLibrary/Samples'
     },
     supported_extensions: ['.wav', '.aif', '.aiff'],
+    /* Batch F — opt-in scan filters (SYSTEM-page knobs persist overrides). */
+    scan_filters: { skip_loops: true, max_sample_size: null },
+    /* Rev. 3 — classification vocabulary (folder aliases only; pad placement
+     * lives in `pad_layout`). Adopted from the drum-kit-generator category set.
+     * Order matters: buildAliasIndex is first-writer-wins, so `shaker` (listed
+     * under both `hat` and `percussion`) resolves to `hat`. */
     role_rules: {
-        kick:       { pads: [1], folder_aliases: ['kick', 'kicks', 'bd', 'bass drum'], fallback_roles: [] },
-        snare:      { pads: [2], folder_aliases: ['snare', 'snares', 'sd'], fallback_roles: [] },
-        clap:       { pads: [3], folder_aliases: ['clap', 'claps'], fallback_roles: ['snare'] },
-        open_hat:   { pads: [4], folder_aliases: ['open hat', 'open hats', 'open_hat', 'open-hat', 'openhihat', 'oh'], fallback_roles: ['percussion'] },
-        closed_hat: { pads: [5], folder_aliases: ['closed hat', 'closed hats', 'closed_hat', 'closed-hat', 'closedhihat', 'ch'], fallback_roles: ['percussion'] },
-        percussion: { pads: [6], folder_aliases: ['percussion', 'perc'], fallback_roles: ['other'] },
-        fx:         { pads: [7], folder_aliases: ['fx', 'sfx', 'effects'], fallback_roles: ['percussion', 'other'] },
-        other:      { pads: [8, 9, 10, 11, 12, 13, 14, 15, 16], folder_aliases: ['other'], exclude_recognised_role_folders: true, fallback_roles: [] }
-    }
+        kick:       { folder_aliases: ['kick', 'kicks', 'kck', 'bd', 'bass drum'] },
+        snare:      { folder_aliases: ['snare', 'snares', 'snr', 'sd'] },
+        rim:        { folder_aliases: ['rim', 'rims', 'rimshot', 'rimshots', 'side stick'] },
+        clap:       { folder_aliases: ['clap', 'claps', 'clp', 'cp', 'hand clap'] },
+        hat:        { folder_aliases: ['hat', 'hats', 'hihat', 'hihats', 'hi hat', 'hi hats', 'hh', 'shaker', 'shakers'] },
+        closed_hat: { folder_aliases: ['closed hat', 'closed hats', 'closed hihat', 'closed hihats', 'closed hh', 'ch', 'chh', 'hh c', 'hat c', 'hh closed'] },
+        open_hat:   { folder_aliases: ['open hat', 'open hats', 'open hihat', 'open hihats', 'open hh', 'oh', 'ohh', 'hh o', 'hat o', 'hh open'] },
+        tom:        { folder_aliases: ['tom', 'toms', 'floor', 'rack', 'rototom', 'rototoms', 'timbale', 'timbales'] },
+        conga:      { folder_aliases: ['conga', 'congas'] },
+        percussion: { folder_aliases: ['percussion', 'perc', 'percs', 'tambourine', 'tambourines', 'tamb', 'cowbell', 'cowbells', 'bongo', 'bongos', 'agogo', 'woodblock', 'woodblocks', 'wood', 'block', 'triangle', 'triangles', 'cabasa', 'maracas', 'guiro', 'guiros', 'claves', 'shaker', 'shakers'] },
+        crash:      { folder_aliases: ['crash', 'crashes'] },
+        ride:       { folder_aliases: ['ride', 'rides'] },
+        cymbal:     { folder_aliases: ['cymbal', 'cymbals', 'cym'] },
+        fx:         { folder_aliases: ['fx', 'sfx', 'effect', 'effects', 'sound fx', 'sound effects', 'noise', 'noises', 'glitch', 'glitches', 'foley', 'impact', 'impacts', 'hit', 'hits', 'riser', 'risers', 'sweep', 'sweeps', 'transition', 'transitions'] },
+        vox:        { folder_aliases: ['vox', 'vocal', 'vocals', 'voice', 'voices', 'chant', 'chants', 'choir'] },
+        bass:       { folder_aliases: ['bass', 'basses', 'sub', 'subs'] },
+        synth:      { folder_aliases: ['synth', 'synths', 'synthesizer', 'analog'] },
+        stab:       { folder_aliases: ['stab', 'stabs', 'chord hit'] },
+        chord:      { folder_aliases: ['chord', 'chords'] },
+        lead:       { folder_aliases: ['lead', 'leads', 'melody', 'melodic', 'melodies'] },
+        pad:        { folder_aliases: ['pad', 'pads', 'atmosphere', 'ambient', 'texture', 'textures', 'drone', 'drones', 'strings', 'keys', 'piano', 'organ', 'brass'] },
+        other:      { folder_aliases: ['other'], exclude_recognised_role_folders: true }
+    },
+    /* Which categories each pad draws from — a union pool, uniform pick.
+     * `["other"]` = every category with no dedicated pad slot, plus `fx`. */
+    pad_layout: DEFAULT_PAD_LAYOUT.map((e) => e.slice())
 };
 
-/* All role names the MVP recognises, in pad order. */
-export const ROLE_ORDER = ['kick', 'snare', 'clap', 'open_hat', 'closed_hat', 'percussion', 'fx', 'other'];
+/* Every classification category, in a stable order (drives emptyCounts). */
+export const ROLE_ORDER = [
+    'kick', 'snare', 'rim', 'clap', 'hat', 'closed_hat', 'open_hat',
+    'tom', 'conga', 'percussion', 'crash', 'ride', 'cymbal', 'fx',
+    'vox', 'bass', 'synth', 'stab', 'chord', 'lead', 'pad', 'other'
+];
+
+/* SYSTEM-page display buckets (spec §13.4). Anything not listed here — the
+ * melodic categories plus `other` — rolls into the "Other" line. */
+export const SYSTEM_BUCKETS = [
+    { key: 'kick',  label: 'Kick', cats: ['kick'] },
+    { key: 'snare', label: 'Snr',  cats: ['snare', 'rim'] },
+    { key: 'clap',  label: 'Clap', cats: ['clap'] },
+    { key: 'hats',  label: 'Hats', cats: ['hat', 'closed_hat', 'open_hat'] },
+    { key: 'toms',  label: 'Tom',  cats: ['tom', 'conga'] },
+    { key: 'perc',  label: 'Perc', cats: ['percussion'] },
+    { key: 'cym',   label: 'Cym',  cats: ['crash', 'ride', 'cymbal'] },
+    { key: 'fx',    label: 'FX',   cats: ['fx'] }
+];
 
 export function loadConfig() {
     try {
@@ -64,13 +106,19 @@ function mergeConfig(base, over) {
     if (over && typeof over === 'object') {
         if (over.sample_roots) Object.assign(out.sample_roots, over.sample_roots);
         if (Array.isArray(over.supported_extensions)) out.supported_extensions = over.supported_extensions.slice();
+        if (over.scan_filters && typeof over.scan_filters === 'object') {
+            out.scan_filters = Object.assign({}, out.scan_filters, over.scan_filters);
+        }
+        if (Array.isArray(over.pad_layout) && over.pad_layout.length === 16) {
+            out.pad_layout = over.pad_layout.map((e) => (Array.isArray(e) ? e.slice() : ['other']));
+        }
         if (over.role_rules && typeof over.role_rules === 'object') {
             for (const role of Object.keys(over.role_rules)) {
                 out.role_rules[role] = Object.assign({}, out.role_rules[role], over.role_rules[role]);
             }
         }
         for (const k of Object.keys(over)) {
-            if (['sample_roots', 'supported_extensions', 'role_rules'].indexOf(k) === -1) out[k] = over[k];
+            if (['sample_roots', 'supported_extensions', 'scan_filters', 'pad_layout', 'role_rules'].indexOf(k) === -1) out[k] = over[k];
         }
     }
     return out;
@@ -115,6 +163,7 @@ export function createScan(config) {
     const sr = cfg.sample_roots || DEFAULT_CONFIG.sample_roots;
     const exts = (cfg.supported_extensions || []).map((e) => String(e).toLowerCase());
     const aliasIndex = buildAliasIndex(cfg.role_rules);
+    const scanFilter = makeScanFilter(cfg);
 
     /* Index BOTH libraries that exist on disk; assignKit filters by the
      * user's chosen Source at pick time. */
@@ -134,6 +183,8 @@ export function createScan(config) {
         records: [],
         counts: emptyCounts(),
         countsBySource: { user: 0, core: 0 },
+        skippedLoops: 0,
+        skippedOversize: 0,
         dirsVisited: 0,
         filesSeen: 0,
         indexPath: null,
@@ -172,6 +223,11 @@ export function createScan(config) {
                 const dot = lower.lastIndexOf('.');
                 const ext = dot >= 0 ? lower.slice(dot) : '';
                 if (exts.indexOf(ext) === -1) continue;
+
+                /* Batch F — opt-in loop / oversize filters (spec §21.1). */
+                const rej = scanFilter.reject(name, st.size || 0);
+                if (rej === 'loop') { state.skippedLoops++; continue; }
+                if (rej === 'oversize') { state.skippedOversize++; continue; }
 
                 const root = rootFor(full);
                 if (!root) continue;
@@ -226,6 +282,8 @@ function writeIndex(state, cfg) {
         generated_at: new Date().toISOString(),
         sample_roots: (state.roots || []).map((r) => r.prefix),
         counts_by_source: state.countsBySource || { user: state.records.length, core: 0 },
+        skipped_loops: state.skippedLoops || 0,
+        skipped_oversize: state.skippedOversize || 0,
         count: state.records.length,
         counts: state.counts,
         records: state.records
@@ -258,6 +316,8 @@ export function loadIndex() {
             parsed.counts = emptyCounts();
             for (const rec of parsed.records) parsed.counts[rec.category] = (parsed.counts[rec.category] || 0) + 1;
         }
+        if (typeof parsed.skipped_loops !== 'number') parsed.skipped_loops = 0;
+        if (typeof parsed.skipped_oversize !== 'number') parsed.skipped_oversize = 0;
         return parsed;
     } catch (e) {
         console.log('kit-builder: cached index malformed, will rebuild (' + e + ')');
@@ -265,20 +325,20 @@ export function loadIndex() {
     }
 }
 
-/* Condensed counts for the System page (§13.4). */
+/* Condensed counts for the System page (§13.4) — the 8 SYSTEM_BUCKETS plus a
+ * catch-all `other` (melodic categories + unclassified). */
 export function summarize(counts) {
     const c = counts || emptyCounts();
     const indexed = ROLE_ORDER.reduce((n, r) => n + (c[r] || 0), 0);
-    return {
-        indexed,
-        kick: c.kick || 0,
-        snare: c.snare || 0,
-        clap: c.clap || 0,
-        hats: (c.open_hat || 0) + (c.closed_hat || 0),
-        perc: c.percussion || 0,
-        fx: c.fx || 0,
-        other: c.other || 0
-    };
+    const out = { indexed };
+    let bucketed = 0;
+    for (const b of SYSTEM_BUCKETS) {
+        const n = b.cats.reduce((s, cat) => s + (c[cat] || 0), 0);
+        out[b.key] = n;
+        bucketed += n;
+    }
+    out.other = indexed - bucketed;
+    return out;
 }
 
 /* Category summary limited to one source ('user' | 'core' | 'both'). Recomputed

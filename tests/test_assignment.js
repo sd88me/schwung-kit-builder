@@ -1,9 +1,10 @@
 /*
- * Seeded random assignment engine (spec §10, §21.3).
+ * Seeded random assignment engine (spec §10, §21.3). Rev. 3: each pad draws
+ * from a UNION of categories (config.pad_layout); no fallback_roles.
  */
 import { assert, eq } from './run.js';
 import { createKit } from '../src/core/kit_model.mjs';
-import { assignKit, rerollPad } from '../src/core/random_assign.mjs';
+import { assignKit, rerollPad, otherPoolCats, poolCatsForPad } from '../src/core/random_assign.mjs';
 import { DEFAULT_CONFIG } from '../src/core/sample_index.mjs';
 
 /* Build a fake index with `n` samples in each named category. */
@@ -26,17 +27,30 @@ function fakeIndex(spec) {
     return { records };
 }
 
+/* Enough in every pad-slot category + melodic categories for the Other pads. */
 const FULL = fakeIndex({
-    kick: 20, snare: 20, clap: 20, open_hat: 20, closed_hat: 20,
-    percussion: 30, fx: 10, other: 200
+    kick: 20, snare: 20, rim: 20, clap: 20, hat: 20, closed_hat: 20, open_hat: 20,
+    tom: 20, conga: 20, percussion: 30, crash: 20, ride: 20, cymbal: 20, fx: 20,
+    vox: 20, bass: 20, synth: 20, stab: 20, chord: 20, lead: 20, pad: 20, other: 40
 });
 
-/* An index whose records carry a mix of user/core sources. */
+/* Expected union pool per pad (mirrors DEFAULT_CONFIG.pad_layout, with the
+ * "other" sentinel expanded). */
+const OTHER = otherPoolCats(DEFAULT_CONFIG, DEFAULT_CONFIG.pad_layout);
+const POOLS = [
+    ['kick'], ['rim', 'snare'], ['snare'], ['clap', 'percussion'],
+    ['percussion', 'tom', 'conga'], ['hat'], ['closed_hat'], ['open_hat'],
+    ['ride', 'cymbal', 'crash'], ['tom', 'percussion', 'conga'], ['percussion'], ['fx'],
+    OTHER, OTHER, OTHER, OTHER
+];
+
 function mixedIndex() {
-    const roles = ['kick', 'snare', 'clap', 'open_hat', 'closed_hat', 'percussion', 'fx', 'other'];
+    const cats = ['kick', 'snare', 'rim', 'clap', 'hat', 'closed_hat', 'open_hat',
+        'tom', 'conga', 'percussion', 'crash', 'ride', 'cymbal', 'fx',
+        'vox', 'bass', 'synth', 'stab', 'chord', 'lead', 'pad', 'other'];
     const records = [];
     for (const src of ['user', 'core']) {
-        for (const cat of roles) {
+        for (const cat of cats) {
             for (let i = 1; i <= 6; i++) {
                 records.push({
                     filesystem_path: `/${src}/${cat}/${cat}_${i}.wav`,
@@ -58,23 +72,49 @@ function run(kit, index, over) {
 
 export const tests = [
     { name: 'fills every unlocked pad that has a candidate (§21.3)', fn() {
-        const kit = createKit(DEFAULT_CONFIG);
-        const res = run(kit, FULL);
+        const res = run(createKit(DEFAULT_CONFIG), FULL);
         eq(res.pads.filter((p) => p.sample).length, 16);
         eq(res.unresolved.length, 0);
     }},
 
-    { name: 'each pad draws from its configured role (§21.3)', fn() {
-        const kit = createKit(DEFAULT_CONFIG);
-        const res = run(kit, FULL);
-        eq(res.pads[0].sample.category, 'kick');    // pad 1
-        eq(res.pads[1].sample.category, 'snare');   // pad 2
-        eq(res.pads[2].sample.category, 'clap');    // pad 3
-        eq(res.pads[3].sample.category, 'open_hat');
-        eq(res.pads[4].sample.category, 'closed_hat');
-        eq(res.pads[5].sample.category, 'percussion');
-        eq(res.pads[6].sample.category, 'fx');
-        for (let i = 7; i < 16; i++) eq(res.pads[i].sample.category, 'other');
+    { name: 'each pad draws from its category-union pool (§21.3)', fn() {
+        const res = run(createKit(DEFAULT_CONFIG), FULL);
+        for (let i = 0; i < 16; i++) {
+            const cat = res.pads[i].sample.category;
+            assert(POOLS[i].indexOf(cat) !== -1, `pad ${i + 1}: ${cat} not in [${POOLS[i]}]`);
+        }
+    }},
+
+    { name: 'otherPoolCats = unslotted categories + fx (Sam\'s call)', fn() {
+        // fx has its own pad but also joins the Other pool
+        for (const c of ['vox', 'bass', 'synth', 'stab', 'chord', 'lead', 'pad', 'other', 'fx']) {
+            assert(OTHER.indexOf(c) !== -1, `Other pool missing ${c}`);
+        }
+        // no drum-slot category leaks into Other
+        for (const c of ['kick', 'snare', 'rim', 'hat', 'closed_hat', 'tom', 'crash']) {
+            assert(OTHER.indexOf(c) === -1, `${c} should not be in the Other pool`);
+        }
+        eq(poolCatsForPad(12, DEFAULT_CONFIG, OTHER), OTHER);   // pad 13 = sentinel
+        eq(poolCatsForPad(0, DEFAULT_CONFIG, OTHER), ['kick']);
+    }},
+
+    { name: 'union pool actually mixes its categories over many seeds', fn() {
+        const seen = new Set();
+        for (let s = 1; s <= 60; s++) {
+            const r = run(createKit(DEFAULT_CONFIG), FULL, { seed: s * 31 + 7 });
+            seen.add(r.pads[1].sample.category);   // pad 2 = rim|snare
+        }
+        assert(seen.has('rim') && seen.has('snare'), `pad 2 only ever drew [${[...seen]}]`);
+    }},
+
+    { name: 'fx appears on pad 12 and can also land on the Other pads', fn() {
+        let fxOnOther = false;
+        for (let s = 1; s <= 80 && !fxOnOther; s++) {
+            const r = run(createKit(DEFAULT_CONFIG), FULL, { seed: s * 17 + 1 });
+            eq(r.pads[11].sample.category, 'fx');                       // pad 12 always fx
+            for (let i = 12; i < 16; i++) if (r.pads[i].sample.category === 'fx') fxOnOther = true;
+        }
+        assert(fxOnOther, 'fx never showed up on an Other pad across 80 seeds');
     }},
 
     { name: 'same seed + same lock state -> identical result (§10.6)', fn() {
@@ -92,18 +132,16 @@ export const tests = [
 
     { name: 'locked pads never change; unlocked ones do (§21.3)', fn() {
         const kit = createKit(DEFAULT_CONFIG);
-        let cur = run(kit, FULL);
+        const cur = run(kit, FULL);
         for (let i = 0; i < 16; i++) kit.pads[i] = cur.pads[i];
-        // lock pads 1 and 8
         kit.pads[0].locked = true;
-        kit.pads[7].locked = true;
+        kit.pads[12].locked = true;
         const lockedKick = kit.pads[0].sample.filesystem_path;
-        const lockedOther = kit.pads[7].sample.filesystem_path;
+        const lockedOther = kit.pads[12].sample.filesystem_path;
         const before = kit.pads.map((p) => p.sample.filesystem_path);
         const res = run(kit, FULL, { seed: 999 });
         eq(res.pads[0].sample.filesystem_path, lockedKick);
-        eq(res.pads[7].sample.filesystem_path, lockedOther);
-        // at least some unlocked pad changed
+        eq(res.pads[12].sample.filesystem_path, lockedOther);
         let changed = 0;
         for (let i = 0; i < 16; i++) if (res.pads[i].sample.filesystem_path !== before[i]) changed++;
         assert(changed > 0, 'expected some unlocked pads to change');
@@ -111,49 +149,49 @@ export const tests = [
 
     { name: 'current sample not immediately reselected when alternatives exist (§10.5)', fn() {
         const kit = createKit(DEFAULT_CONFIG);
-        let res = run(kit, FULL, { seed: 1 });
+        const res = run(kit, FULL, { seed: 1 });
         for (let i = 0; i < 16; i++) kit.pads[i] = res.pads[i];
         const kickBefore = kit.pads[0].sample.filesystem_path;
-        // re-run many seeds; kick pad should move off its current pick most of the time
-        let stayed = 0, total = 40;
-        for (let s = 1; s <= total; s++) {
+        let stayed = 0;
+        for (let s = 1; s <= 40; s++) {
             const r = run(kit, FULL, { seed: s * 7 + 1 });
             if (r.pads[0].sample.filesystem_path === kickBefore) stayed++;
         }
-        assert(stayed === 0, `kick pad kept its current sample ${stayed}/${total} times (should be 0)`);
+        assert(stayed === 0, `kick pad kept its current sample ${stayed}/40 times (should be 0)`);
     }},
 
-    { name: 'a role with no candidates leaves that pad, reports unresolved, kit stays valid (§10.3)', fn() {
-        const idx = fakeIndex({ kick: 5, snare: 5, other: 50 }); // no clap/hats/perc/fx
-        const kit = createKit(DEFAULT_CONFIG);
-        const res = run(kit, idx);
-        // clap falls back to snare (config), so clap pad resolves; open_hat/closed_hat
-        // fall back to percussion which is also empty -> unresolved. fx falls back to
-        // percussion then other -> resolves.
-        const unresolvedRoles = res.unresolved.map((u) => u.role);
-        assert(unresolvedRoles.includes('open_hat'), 'open_hat should be unresolved');
-        assert(unresolvedRoles.includes('closed_hat'), 'closed_hat should be unresolved');
-        eq(res.pads[3].sample, null);   // open_hat pad stays empty
+    { name: 'an empty pool leaves the pad unresolved (no fallback in Rev. 3) (§10.3)', fn() {
+        // kick + snare + a bit of "other" only — nothing for pads 4..12
+        const idx = fakeIndex({ kick: 5, snare: 5, other: 50 });
+        const res = run(createKit(DEFAULT_CONFIG), idx);
+        const un = res.unresolved.map((u) => u.pad);
+        // pad 4 = [clap, percussion] -> both empty -> unresolved
+        assert(un.indexOf(4) !== -1, 'pad 4 should be unresolved');
+        assert(un.indexOf(6) !== -1, 'pad 6 (hat) should be unresolved');
+        assert(un.indexOf(12) !== -1, 'pad 12 (fx) should be unresolved');
+        eq(res.pads[3].sample, null);
+        // pads 1..3 resolve, pads 13..16 resolve from "other"
+        assert(res.pads[0].sample && res.pads[1].sample && res.pads[2].sample);
+        for (let i = 12; i < 16; i++) assert(res.pads[i].sample, `Other pad ${i + 1} should fill from "other"`);
         assert(res.warning && res.warning.includes('unavailable'), res.warning);
-        eq(res.pads.length, 16);
     }},
 
     { name: 'small pool relaxes duplicate-prevention and reports it (§10.4)', fn() {
-        // 9 "other" pads (8..16) but only 3 unique other samples
-        const idx = fakeIndex({ kick: 5, snare: 5, clap: 5, percussion: 5, fx: 5, other: 3 });
-        idx.records.push(
-            { filesystem_path: '/lib/open_hat/oh_1.wav', source: 'user', category: 'open_hat', filename: 'oh_1.wav', extension: '.wav' },
-            { filesystem_path: '/lib/closed_hat/ch_1.wav', source: 'user', category: 'closed_hat', filename: 'ch_1.wav', extension: '.wav' }
-        );
+        // pads 13..16 all draw the Other pool. fx=1 is claimed by pad 12 first,
+        // leaving just other=2 unique samples for four Other pads -> relaxation.
+        const idx = fakeIndex({
+            kick: 5, snare: 5, rim: 5, clap: 5, hat: 5, closed_hat: 5, open_hat: 5,
+            tom: 5, conga: 5, percussion: 8, crash: 5, ride: 5, cymbal: 5,
+            fx: 1, other: 2
+        });
         const res = run(createKit(DEFAULT_CONFIG), idx);
         assert(res.relaxed.length > 0, 'expected duplicate relaxation on the Other pads');
-        // every other pad still ends up assigned
-        for (let i = 7; i < 16; i++) assert(res.pads[i].sample, `pad ${i + 1} should be assigned`);
+        for (let i = 12; i < 16; i++) assert(res.pads[i].sample, `pad ${i + 1} should be assigned`);
     }},
 
     { name: 'rerollPad changes one unlocked pad and avoids kit duplicates + current', fn() {
         const kit = createKit(DEFAULT_CONFIG);
-        let cur = run(kit, FULL);
+        const cur = run(kit, FULL);
         for (let i = 0; i < 16; i++) kit.pads[i] = cur.pads[i];
         const before = kit.pads.map((p) => p.sample.filesystem_path);
         const kickBefore = kit.pads[0].sample.filesystem_path;
@@ -162,17 +200,24 @@ export const tests = [
         assert(r.changed, 'pad 0 should change');
         eq(r.pad.sample.category, 'kick');
         assert(r.pad.sample.filesystem_path !== kickBefore, 'must not reselect the current sample');
-        // not equal to any OTHER pad's sample
         for (let i = 1; i < 16; i++) assert(r.pad.sample.filesystem_path !== before[i], `collides with pad ${i + 1}`);
-        // the rest of the kit is untouched (rerollPad does not mutate)
         eq(kit.pads.map((p) => p.sample.filesystem_path), before);
+    }},
+
+    { name: 'rerollPad on a union-pool pad stays inside the pool', fn() {
+        const kit = createKit(DEFAULT_CONFIG);
+        const cur = run(kit, FULL);
+        for (let i = 0; i < 16; i++) kit.pads[i] = cur.pads[i];
+        for (let s = 1; s <= 30; s++) {
+            const r = rerollPad({ kit, index: FULL, config: DEFAULT_CONFIG, seed: s * 5 + 2, source: 'user', preventDuplicates: true, padIndex: 8 });
+            if (r.pad && r.pad.sample) assert(POOLS[8].indexOf(r.pad.sample.category) !== -1, `pad 9 drew ${r.pad.sample.category}`);
+        }
     }},
 
     { name: 'rerollPad never lands on a rejected sample', fn() {
         const kit = createKit(DEFAULT_CONFIG);
-        let cur = run(kit, FULL);
+        const cur = run(kit, FULL);
         for (let i = 0; i < 16; i++) kit.pads[i] = cur.pads[i];
-        // reject every kick except two
         const rejects = new Set();
         for (const r of FULL.records) if (r.category === 'kick' && !/_(19|20)\.wav$/.test(r.filename)) rejects.add(r.filesystem_path);
         for (let s = 1; s <= 40; s++) {
@@ -183,7 +228,7 @@ export const tests = [
 
     { name: 'rerollPad refuses a locked pad', fn() {
         const kit = createKit(DEFAULT_CONFIG);
-        let cur = run(kit, FULL);
+        const cur = run(kit, FULL);
         for (let i = 0; i < 16; i++) kit.pads[i] = cur.pads[i];
         kit.pads[3].locked = true;
         const r = rerollPad({ kit, index: FULL, config: DEFAULT_CONFIG, seed: 1, source: 'user', preventDuplicates: true, padIndex: 3 });
@@ -194,25 +239,27 @@ export const tests = [
     { name: 'source filter restricts picks to the chosen library (§10.1)', fn() {
         const idx = mixedIndex();
         const u = run(createKit(DEFAULT_CONFIG), idx, { source: 'user' });
-        for (const p of u.pads) assert(p.sample.filesystem_path.startsWith('/user/'), `user-only picked ${p.sample.filesystem_path}`);
+        for (const p of u.pads) assert(!p.sample || p.sample.filesystem_path.startsWith('/user/'), `user-only picked ${p.sample && p.sample.filesystem_path}`);
 
         const c = run(createKit(DEFAULT_CONFIG), idx, { source: 'core' });
-        for (const p of c.pads) assert(p.sample.filesystem_path.startsWith('/core/'), `core-only picked ${p.sample.filesystem_path}`);
+        for (const p of c.pads) assert(!p.sample || p.sample.filesystem_path.startsWith('/core/'), `core-only picked ${p.sample && p.sample.filesystem_path}`);
 
-        // 'both' draws from the union — over many seeds it must use each source at least once
         let sawUser = false, sawCore = false;
         for (let s = 1; s <= 30; s++) {
             const b = run(createKit(DEFAULT_CONFIG), idx, { source: 'both', seed: s * 17 + 3 });
             for (const p of b.pads) {
-                if (p.sample.filesystem_path.startsWith('/user/')) sawUser = true;
-                if (p.sample.filesystem_path.startsWith('/core/')) sawCore = true;
+                if (p.sample && p.sample.filesystem_path.startsWith('/user/')) sawUser = true;
+                if (p.sample && p.sample.filesystem_path.startsWith('/core/')) sawCore = true;
             }
         }
         assert(sawUser && sawCore, `'both' should mix sources (user=${sawUser} core=${sawCore})`);
     }},
 
     { name: 'rejects are never chosen; favourites come up more often', fn() {
-        const idx = fakeIndex({ kick: 6, snare: 6, clap: 6, open_hat: 6, closed_hat: 6, percussion: 6, fx: 6, other: 6 });
+        const idx = fakeIndex({
+            kick: 6, snare: 6, rim: 6, clap: 6, hat: 6, closed_hat: 6, open_hat: 6,
+            tom: 6, conga: 6, percussion: 8, crash: 6, ride: 6, cymbal: 6, fx: 6, other: 12
+        });
         const rejects = new Set(['/lib/kick/kick_1.wav', '/lib/kick/kick_2.wav', '/lib/kick/kick_3.wav']);
         const favourites = new Set(['/lib/kick/kick_6.wav']);
         let favHits = 0;
@@ -222,7 +269,6 @@ export const tests = [
             assert(!rejects.has(k), `rejected sample ${k} was assigned`);
             if (k === '/lib/kick/kick_6.wav') favHits++;
         }
-        // 3 eligible non-fav (4,5) + fav weighted x2 => fav ~ 2/4 of picks; certainly > 1/3
         assert(favHits > 40, `favourite only came up ${favHits}/120 times`);
     }}
 ];

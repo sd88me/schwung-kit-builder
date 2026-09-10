@@ -7,8 +7,13 @@
  * checked. Missing sample FILES are a separate concern (storage.markMissingSamples).
  */
 
+/* Rev. 3 classification vocabulary. `validateKit` only checks that a pad's
+ * `role` is a non-empty string (forward-compatible with older kits + future
+ * categories); this list is documentation and for any caller that wants it. */
 export const ROLES = [
-    'kick', 'snare', 'clap', 'open_hat', 'closed_hat', 'percussion', 'fx', 'other'
+    'kick', 'snare', 'rim', 'clap', 'hat', 'closed_hat', 'open_hat',
+    'tom', 'conga', 'percussion', 'crash', 'ride', 'cymbal', 'fx',
+    'vox', 'bass', 'synth', 'stab', 'chord', 'lead', 'pad', 'other'
 ];
 
 function isFiniteNum(x) {

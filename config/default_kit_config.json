@@ -5,47 +5,50 @@
     "core": "/data/CoreLibrary/Samples"
   },
   "supported_extensions": [".wav", ".aif", ".aiff"],
+  "scan_filters": {
+    "skip_loops": true,
+    "max_sample_size": null
+  },
   "role_rules": {
-    "kick": {
-      "pads": [1],
-      "folder_aliases": ["kick", "kicks", "bd", "bass drum"],
-      "fallback_roles": []
-    },
-    "snare": {
-      "pads": [2],
-      "folder_aliases": ["snare", "snares", "sd"],
-      "fallback_roles": []
-    },
-    "clap": {
-      "pads": [3],
-      "folder_aliases": ["clap", "claps"],
-      "fallback_roles": ["snare"]
-    },
-    "open_hat": {
-      "pads": [4],
-      "folder_aliases": ["open hat", "open hats", "open_hat", "open-hat", "openhihat", "oh"],
-      "fallback_roles": ["percussion"]
-    },
-    "closed_hat": {
-      "pads": [5],
-      "folder_aliases": ["closed hat", "closed hats", "closed_hat", "closed-hat", "closedhihat", "ch"],
-      "fallback_roles": ["percussion"]
-    },
-    "percussion": {
-      "pads": [6],
-      "folder_aliases": ["percussion", "perc"],
-      "fallback_roles": ["other"]
-    },
-    "fx": {
-      "pads": [7],
-      "folder_aliases": ["fx", "sfx", "effects"],
-      "fallback_roles": ["percussion", "other"]
-    },
-    "other": {
-      "pads": [8, 9, 10, 11, 12, 13, 14, 15, 16],
-      "folder_aliases": ["other"],
-      "exclude_recognised_role_folders": true,
-      "fallback_roles": []
-    }
-  }
+    "kick":       { "folder_aliases": ["kick", "kicks", "kck", "bd", "bass drum"] },
+    "snare":      { "folder_aliases": ["snare", "snares", "snr", "sd"] },
+    "rim":        { "folder_aliases": ["rim", "rims", "rimshot", "rimshots", "side stick"] },
+    "clap":       { "folder_aliases": ["clap", "claps", "clp", "cp", "hand clap"] },
+    "hat":        { "folder_aliases": ["hat", "hats", "hihat", "hihats", "hi hat", "hi hats", "hh", "shaker", "shakers"] },
+    "closed_hat": { "folder_aliases": ["closed hat", "closed hats", "closed hihat", "closed hihats", "closed hh", "ch", "chh", "hh c", "hat c", "hh closed"] },
+    "open_hat":   { "folder_aliases": ["open hat", "open hats", "open hihat", "open hihats", "open hh", "oh", "ohh", "hh o", "hat o", "hh open"] },
+    "tom":        { "folder_aliases": ["tom", "toms", "floor", "rack", "rototom", "rototoms", "timbale", "timbales"] },
+    "conga":      { "folder_aliases": ["conga", "congas"] },
+    "percussion": { "folder_aliases": ["percussion", "perc", "percs", "tambourine", "tambourines", "tamb", "cowbell", "cowbells", "bongo", "bongos", "agogo", "woodblock", "woodblocks", "wood", "block", "triangle", "triangles", "cabasa", "maracas", "guiro", "guiros", "claves", "shaker", "shakers"] },
+    "crash":      { "folder_aliases": ["crash", "crashes"] },
+    "ride":       { "folder_aliases": ["ride", "rides"] },
+    "cymbal":     { "folder_aliases": ["cymbal", "cymbals", "cym"] },
+    "fx":         { "folder_aliases": ["fx", "sfx", "effect", "effects", "sound fx", "sound effects", "noise", "noises", "glitch", "glitches", "foley", "impact", "impacts", "hit", "hits", "riser", "risers", "sweep", "sweeps", "transition", "transitions"] },
+    "vox":        { "folder_aliases": ["vox", "vocal", "vocals", "voice", "voices", "chant", "chants", "choir"] },
+    "bass":       { "folder_aliases": ["bass", "basses", "sub", "subs"] },
+    "synth":      { "folder_aliases": ["synth", "synths", "synthesizer", "analog"] },
+    "stab":       { "folder_aliases": ["stab", "stabs", "chord hit"] },
+    "chord":      { "folder_aliases": ["chord", "chords"] },
+    "lead":       { "folder_aliases": ["lead", "leads", "melody", "melodic", "melodies"] },
+    "pad":        { "folder_aliases": ["pad", "pads", "atmosphere", "ambient", "texture", "textures", "drone", "drones", "strings", "keys", "piano", "organ", "brass"] },
+    "other":      { "folder_aliases": ["other"], "exclude_recognised_role_folders": true }
+  },
+  "pad_layout": [
+    ["kick"],
+    ["rim", "snare"],
+    ["snare"],
+    ["clap", "percussion"],
+    ["percussion", "tom", "conga"],
+    ["hat"],
+    ["closed_hat"],
+    ["open_hat"],
+    ["ride", "cymbal", "crash"],
+    ["tom", "percussion", "conga"],
+    ["percussion"],
+    ["fx"],
+    ["other"],
+    ["other"],
+    ["other"],
+    ["other"]
+  ]
 }

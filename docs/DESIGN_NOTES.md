@@ -270,8 +270,9 @@ instrumentRack → chains[0].devices[0] (kind:"drumRack") → drumRack.chains[]
 one chain per pad, keyed by `drumZoneSettings.receivingNote` (36–51 ⇒ pads
 1–16), with the sample in `devices[0].deviceData.sampleUri` and gain/pan/etc.
 in `devices[0].parameters`. So Stage 6 emits that format. §2.2 defers
-`.ablpreset` *generation for Ableton itself* and the `.ablpresetbundle`
-(sample-copying) form — we produce the drum-rack JSON MrDrums reads and
+`.ablpreset` *generation for Ableton itself*; a `.ablpresetbundle`
+(sample-copying) exporter was considered and dropped in Rev. 3 (inbound
+format — see spec §1). We produce the drum-rack JSON MrDrums reads and
 reference samples in place.
 
 ### Mappings (verified against the MrDrums loader, not invented — §16.3)

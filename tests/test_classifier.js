@@ -42,6 +42,56 @@ export const tests = [
         eq(role(['Bass Drum']), 'kick');
     }},
 
+    { name: 'Rev. 3 vocabulary — new drum categories', fn() {
+        eq(role(['Kck']), 'kick');
+        eq(role(['Rimshot']), 'rim');           // rim is its own category now
+        eq(role(['Side Stick']), 'rim');
+        eq(role(['Hand Clap']), 'clap');
+        eq(role(['CP']), 'clap');
+        eq(role(['Toms']), 'tom');              // out of percussion
+        eq(role(['Floor']), 'tom');
+        eq(role(['Congas']), 'conga');
+        eq(role(['Crash']), 'crash');
+        eq(role(['Rides']), 'ride');
+        eq(role(['Cymbals']), 'cymbal');
+        eq(role(['Tambourine']), 'percussion');
+        eq(role(['Cowbells']), 'percussion');
+        eq(role(['Hits']), 'fx');
+    }},
+
+    { name: 'Rev. 3 — generic hat vs closed/open, plurals', fn() {
+        eq(role(['Hi-Hats']), 'hat');           // generic -> its own `hat` category
+        eq(role(['Hats']), 'hat');
+        eq(role(['Closed Hats']), 'closed_hat');
+        eq(role(['Open Hats']), 'open_hat');
+        eq(role(['OHH']), 'open_hat');
+        eq(role(['CHH']), 'closed_hat');
+        // deepest wins: generic then specific
+        eq(role(['Hi-Hats', 'Open Hats']), 'open_hat');
+        eq(role(['Hats', 'Closed']), 'hat');    // 'closed' alone is not an alias
+    }},
+
+    { name: 'Rev. 3 — melodic categories (pool into Other for assignment)', fn() {
+        eq(role(['Vocals']), 'vox');
+        eq(role(['Choir']), 'vox');
+        eq(role(['Bass']), 'bass');
+        eq(role(['Sub']), 'bass');
+        eq(role(['Synth']), 'synth');
+        eq(role(['Analog']), 'synth');
+        eq(role(['Chords']), 'chord');
+        eq(role(['Stabs']), 'stab');
+        eq(role(['Lead']), 'lead');
+        eq(role(['Melodic']), 'lead');
+        eq(role(['Pads']), 'pad');
+        eq(role(['Keys']), 'pad');
+        eq(role(['Piano']), 'pad');
+    }},
+
+    { name: 'shaker resolves to hat (listed under both hat and percussion)', fn() {
+        eq(role(['Shakers']), 'hat');           // hat comes first in role_rules order
+        eq(role(['Percussion', 'Shakers']), 'hat');   // deepest wins, still hat
+    }},
+
     { name: 'deepest matching component wins (§7.2 decision 5)', fn() {
         eq(role(['Percussion', 'Closed Hat']), 'closed_hat');
         eq(role(['Kicks', 'Layered', 'Snare']), 'snare');
@@ -49,7 +99,7 @@ export const tests = [
     }},
 
     { name: 'unrecognised folders fall through to other (§7.3)', fn() {
-        eq(role(['Textures']), 'other');
+        eq(role(['Unsorted']), 'other');
         eq(role([]), 'other');
         eq(role(['Weird', 'Nested', 'Thing']), 'other');
     }},

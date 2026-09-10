@@ -9,9 +9,12 @@
  *   { "drumZoneSettings": { "receivingNote": 36..51, "chokeGroup": null },
  *     "devices": [ { "kind": "drumCell",
  *       "deviceData": { "sampleUri": "<uri>" },
- *       "parameters": { "Volume": <dB>, "Pan": 0, "Voice_Transpose": 0,
- *                       "Voice_PlaybackStart": 0, "Voice_Envelope_Attack": 0,
- *                       "Voice_Envelope_Decay": 0.25 } } ] }
+ *       "parameters": { <full 42-param block — see DRUM_CELL_DEFAULTS> } } ] }
+ *
+ * The drumCell parameter block is written in full (verbatim from a real Move
+ * drum-rack export) so the preset also satisfies Move's own Track-Preset
+ * loader, not just MrDrums. Kit Builder only drives `Volume` (from pad gain)
+ * and `Pan`; MrDrums ignores the rest.
  *
  * MrDrums maps Volume dB -> gain as  gain = 10^((dB+12)/20)  (so -12 dB = 1.0),
  * and resolves sampleUri: `ableton:/user-library/X` -> `/data/UserData/UserLibrary/X`,
@@ -67,18 +70,45 @@ export function gainToDb(gain) {
     return Math.round((20 * Math.log10(g) - 12) * 1e4) / 1e4;
 }
 
+/*
+ * A drumCell's full 42-parameter block, verbatim from a real Move drum-rack
+ * export (every pad carried an identical block). MrDrums only reads the
+ * handful it needs, but writing the complete set keeps the preset valid for
+ * Move's own Track-Preset loader too. `Volume` and `Pan` are the only two
+ * Kit Builder drives from the kit model.
+ */
+const DRUM_CELL_DEFAULTS = {
+    Effect_EightBitFilterDecay: 5, Effect_EightBitResamplingRate: 14080,
+    Effect_FmAmount: 0, Effect_FmFrequency: 1000,
+    Effect_LoopLength: 0.3, Effect_LoopOffset: 0.02,
+    Effect_NoiseAmount: 0, Effect_NoiseFrequency: 10000,
+    Effect_On: true, Effect_PitchEnvelopeAmount: 0, Effect_PitchEnvelopeDecay: 0.3,
+    Effect_PunchAmount: 0, Effect_PunchTime: 0.12,
+    Effect_RingModAmount: 0, Effect_RingModFrequency: 1000,
+    Effect_StretchFactor: 1, Effect_StretchGrainSize: 0.1,
+    Effect_SubOscAmount: 0, Effect_SubOscFrequency: 60,
+    Effect_Type: 'Stretch',
+    Enabled: true, NotePitchBend: true, Pan: 0,
+    Voice_Detune: 0,
+    Voice_Envelope_Attack: 0.0001, Voice_Envelope_Decay: 1,
+    Voice_Envelope_Hold: 0.3, Voice_Envelope_Mode: 'A-H-D',
+    Voice_Filter_Frequency: 22000, Voice_Filter_On: true,
+    Voice_Filter_PeakGain: 1, Voice_Filter_Resonance: 0, Voice_Filter_Type: 'Lowpass',
+    Voice_Gain: 1,
+    Voice_ModulationAmount: 0, Voice_ModulationSource: 'Velocity', Voice_ModulationTarget: 'Filter',
+    Voice_PlaybackLength: 1, Voice_PlaybackStart: 0,
+    Voice_Transpose: 0, Voice_VelocityToVolume: 0.35,
+    Volume: -12
+};
+
 function drumCell(sample, gain) {
     return {
         kind: 'drumCell',
         deviceData: { sampleUri: sampleUriFor(sample) },
-        parameters: {
+        parameters: Object.assign({}, DRUM_CELL_DEFAULTS, {
             Volume: gainToDb(gain),
-            Pan: 0.0,
-            Voice_Transpose: 0,
-            Voice_PlaybackStart: 0.0,
-            Voice_Envelope_Attack: 0.0,
-            Voice_Envelope_Decay: 0.25
-        }
+            Pan: 0.0
+        })
     };
 }
 
