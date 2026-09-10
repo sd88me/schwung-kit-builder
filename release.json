@@ -1,9 +1,9 @@
 {
   "id": "kit-builder",
   "name": "Kit Builder",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "component_type": "overtake",
-  "stage": "7 - packaged (MVP complete)",
-  "download_url": "https://github.com/sd88me/schwung-kit-builder/releases/download/v0.1.0/kit-builder-module.tar.gz",
-  "notes": "v0.1.0 feature-complete MVP: overtake shell; chunked sample index + folder classification; 16-pad kit model + seeded assignment; native audition DSP (WAV+AIFF, float mix bus, anti-click ramps); persistence (save/overwrite, restore-on-relaunch, New); MrDrums export as an Ableton drum-rack .ablpreset into Track Presets (schema verified against the MrDrums loader source). Known limits: no in-tool kit browsing, User Library only, no per-pad edit, one voice/pad. See docs/DESIGN_NOTES.md. schwung-manager reads version + download_url."
+  "stage": "post-MVP (Batches A–G)",
+  "download_url": "https://github.com/sd88me/schwung-kit-builder/releases/download/v0.2.0/kit-builder-module.tar.gz",
+  "notes": "v0.2.0 post-MVP: per-pad gain trim + single-pad re-roll; Core Library as a sample source; library-wide reject/favourite memory; EXPORT page with MrDrums .ablpreset + MPC .xpm export (samples gathered beside the .xpm, MANIFEST fallback); scan-time loop/size filters (SYSTEM knobs); WAV metadata stripping; full 42-param drumCell in the MrDrums preset. Revision 3 category/pad model: 22 classification categories, config.pad_layout union pools (no fallback chain), filename fallback for classification, scrollable SYSTEM page. schwung-manager reads version + download_url."
 }
