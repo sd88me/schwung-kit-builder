@@ -95,21 +95,23 @@ kept, silent); **Shift + Back** exits.
 
 ### KIT page
 
-**Knob 1** selects a pad (pool / sample / lock shown). **Knob 5** trims the
-selected pad's gain, shown as dB. **Up** favourites / **Down** rejects the
-pad's sample for future draws (mutually exclusive, toggles off on repeat);
-**Shift+Up** / **Shift+Down** clear the whole favourite / reject list.
-**Jog press** clears the pad unless locked.
+- **Knob 1** selects a pad (pool / sample / lock shown).
+- **Knob 5** trims the selected pad's gain, shown as dB.
+- **Up** favourites / **Down** rejects the pad's sample for future draws (mutually exclusive, toggles off on repeat);
+- **Shift+Up** / **Shift+Down** clear the whole favourite / reject list.
+- **Jog press** clears the pad unless locked.
 
 ### SYSTEM page
 
-**Jog press** = **Rescan**: walks the selected library roots, classifies each
+- **Jog press** = **Rescan**: walks the selected library roots, classifies each
 sample by folder name (deepest match; filename-keyword fallback), and caches the
 index to `KitBuilder/.sample-index.json`. Runs in bounded chunks so the display
-never stalls. A fixed header plus a scrollable list (**Up/Down**) shows: indexed
+never stalls.
+- A fixed header plus a scrollable list (**Up/Down**) shows: indexed
 count, loop-filter state, size cap, skipped ("Cut") count, the eight category
-buckets, and "Other". **Knob 1** toggles the loop-name filter; **Knob 2** cycles
-the max-sample-size cap (Off / 1M / 2M / 5M / 10M). Both persist in
+buckets, and "Other".
+- **Knob 1** toggles the loop-name filter;
+- **Knob 2** cycles the max-sample-size cap (Off / 1M / 2M / 5M / 10M). Both persist in
 `KitBuilder/config.json` and take effect on the next Rescan.
 
 ### EXPORT page
