@@ -79,6 +79,11 @@ import {
 } from '/data/UserData/schwung/shared/input_filter.mjs';
 
 import {
+    drawMenuHeader, drawMenuFooter, drawMenuList,
+    showOverlay, tickOverlay, drawOverlay, hideOverlay, isOverlayActive
+} from '/data/UserData/schwung/shared/menu_layout.mjs';
+
+import {
     loadConfig, loadIndex, createScan, summarize, summarizeRecords
 } from './core/sample_index.mjs';
 
@@ -108,7 +113,7 @@ import {
  * ------------------------------------------------------------------ */
 
 const MODULE_TAG = 'kit-builder';
-const VERSION = '0.1.0';
+const VERSION = '0.3.1';
 const PAD_COUNT = 16;
 
 /* Kit Builder pad 1..16 -> hardware pad note.
@@ -659,18 +664,13 @@ function toggleSeqMode() {
     needsRedraw = true;
 }
 
-/* Play button — run / stop. Works whenever the sequencer "exists" (edit view
- * open or a pattern already programmed). */
+/* Play button — always toggles run/stop, like a normal transport. An empty
+ * pattern just runs a silent clock; pressing Play again stops it. */
 function toggleSeqRun() {
-    if (!seqMode && !seqHasSteps()) {
-        footer = 'Sequencer empty — press Rec to program it';
-        needsRedraw = true;
-        return;
-    }
     seqRunning = !seqRunning;
     dspSet('seq_run', seqRunning ? '1' : '0');
     if (seqRunning) dspSet('seq_fg', '1');
-    if (!seqRunning) seqStep = 0;
+    else seqStep = 0;
     setButtonLED(MovePlay, seqRunning ? Green : Black, true);
     footer = seqRunning ? 'Seq running' : 'Seq stopped';
     paintStepLeds();
@@ -933,6 +933,14 @@ globalThis.onMidiMessageInternal = function (data) {
     /* The Save keyboard owns all input while open. */
     if (isTextEntryActive()) { handleTextEntryMidi(data); return; }
 
+    /* Input clears a lingering status toast (after the grace) — without
+     * consuming the press, so the same button both dismisses and acts. */
+    if (toastGrace <= 0 && toastActive()) {
+        if (typeof hideOverlay === 'function') hideOverlay();
+        footerShown = footer;
+        needsRedraw = true;
+    }
+
     const status = data[0] & 0xF0;
     const d1 = data[1];
     const d2 = data[2];
@@ -1007,10 +1015,6 @@ globalThis.onMidiMessageInternal = function (data) {
                     const dir = d1 === MoveDown ? 1 : -1;
                     exportSel = (exportSel + dir + EXPORT_ROWS.length) % EXPORT_ROWS.length;
                     needsRedraw = true;
-                } else if (d2 > 0 && PAGES[pageIndex] === 'SYSTEM') {
-                    /* Scroll the index-report list. */
-                    sysScroll += (d1 === MoveDown ? 1 : -1);
-                    needsRedraw = true;
                 }
                 return;
 
@@ -1061,7 +1065,6 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (next !== scanPrefs.skip_loops) {
                         scanPrefs.skip_loops = next;
                         saveScanPrefs(scanPrefs);
-                        sysScroll = 0;   // bring the Loop-filter row into view
                         footer = `Loops: ${next ? 'skip' : 'keep'} — Rescan to apply`;
                         needsRedraw = true;
                     }
@@ -1084,7 +1087,6 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (nextCap !== scanPrefs.max_sample_size) {
                         scanPrefs.max_sample_size = nextCap;
                         saveScanPrefs(scanPrefs);
-                        sysScroll = 0;   // bring the Max-size row into view
                         footer = `Max sample: ${scanSizeLabel()} — Rescan to apply`;
                         needsRedraw = true;
                     }
@@ -1163,7 +1165,13 @@ globalThis.onMidiMessageExternal = function (_data) {
 
 const MX = 6;          // left margin
 const RX = 122;        // right edge (usable)
-const SCREEN_W = 128;
+
+/* Shared chrome puts the header in rows 0..6 and the hint footer in 57..63,
+ * so every page body lives between. */
+const BODY_TOP = 10;
+const BODY_BOTTOM = 55;
+
+const SOURCE_SHORT = { user: 'Usr', core: 'Cor', both: 'U+C' };
 
 function tw(s) {
     return (typeof text_width === 'function') ? text_width(String(s)) : String(s).length * 5;
@@ -1177,160 +1185,146 @@ function clamp(s, maxPx) {
 function line(x, y, s) {
     print(x, y, clamp(s, RX - x), 1);
 }
-function button(bx, by, bw, bh, label, active) {
-    if (active) fill_rect(bx, by, bw, bh, 1);
-    else draw_rect(bx, by, bw, bh, 1);
-    print(bx + Math.max(2, Math.floor((bw - tw(label)) / 2)), by + Math.floor((bh - 7) / 2) + 1,
-        label, active ? 0 : 1);
-}
 
+/* Top strip — shared movy header: kit name left, page name right. */
 function drawHeader() {
-    print(MX, 2, 'Kit Builder', 1);
-    const pg = PAGES[pageIndex];
-    print(RX - tw(pg), 2, pg, 1);
-    fill_rect(0, 11, SCREEN_W, 1, 1);
+    drawMenuHeader(currentKitName || 'Kit Builder', seqMode ? 'SEQ' : PAGES[pageIndex]);
 }
 
-/* The footer status line (separator y=52, text y=54) is drawn only on the
- * RANDOM page, where transient action results belong. Pages that keep it must
- * end their content by CONTENT_BOTTOM; footer-less pages get FULL_BOTTOM. */
-const CONTENT_BOTTOM = 44;
-const FULL_BOTTOM = 56;
-
-function drawFooter() {
-    fill_rect(0, 52, SCREEN_W, 1, 1);
-    if (footer) print(MX, 54, clamp(footer, RX - MX), 1);
+/* Bottom strip — shared hint pills, per page. */
+function drawPageFooter() {
+    let hints;
+    if (seqMode) {
+        hints = [['Step', 'edit'], ['K1', 'pad'], ['Play', seqRunning ? 'stop' : 'run'], ['Rec', 'close']];
+    } else if (PAGES[pageIndex] === 'RANDOM') {
+        hints = [['Jog', 'page'], ['Up/Dn', 'select'], ['Clk', RANDOM_ACTIONS[randomSel].name]];
+    } else if (PAGES[pageIndex] === 'KIT') {
+        hints = [['Jog', 'page'], ['K1', 'pad'], ['K5', 'gain'], ['Up/Dn', 'fav/rej']];
+    } else if (PAGES[pageIndex] === 'SYSTEM') {
+        hints = [['Jog', 'page'], ['Clk', scan ? 'scanning' : 'rescan'], ['K1', 'loop'], ['K2', 'max']];
+    } else { // EXPORT
+        hints = [['Jog', 'page'], ['Clk', EXPORT_ROWS[exportSel].id === '__now' ? 'export' : 'toggle']];
+    }
+    drawMenuFooter(hints);
 }
 
 function drawRandomPage() {
-    /* Action list — selected row inverted; jog-press (or step double-press)
-     * fires it. Step buttons 1..N mirror this list. */
+    /* Actions down the left (selected row inverted, step buttons mirror it),
+     * the live controls down the right. Both fit the body without scrolling. */
     for (let i = 0; i < RANDOM_ACTIONS.length; i++) {
-        const y = 10 + i * 7;
-        const label = RANDOM_ACTIONS[i].name + (newArmed > 0 && RANDOM_ACTIONS[i].name === 'New' ? '?' : '');
+        const y = BODY_TOP + 2 + i * 7;
+        const label = RANDOM_ACTIONS[i].name + (newArmed > 0 && RANDOM_ACTIONS[i].name === 'New' ? ' ?' : '');
         if (i === randomSel) {
-            fill_rect(0, y - 1, 62, 7, 1);
-            print(MX, y, clamp(label, 56), 0);
+            fill_rect(0, y - 1, 64, 7, 1);
+            print(MX, y, clamp(label, 58), 0);
         } else {
-            print(MX, y, clamp(label, 56), 1);
+            print(MX, y, clamp(label, 58), 1);
         }
     }
-    const rx = 70;
-    line(rx, 12, `Dup ${preventDuplicates ? 'Avoid' : 'Allow'}`);
-    line(rx, 20, `Src ${SOURCE_LABEL[sourceMode]}`);
-    line(rx, 28, `Asn ${assignedCount()}/16`);
-    line(rx, 36, `Lck ${lockedCount()}/16`);
-    line(rx, 44, currentKitName || '(unsaved)');
+    const rx = 72;
+    line(rx, BODY_TOP + 2,  `Dup ${preventDuplicates ? 'Avoid' : 'Allow'}`);   // knob 1
+    line(rx, BODY_TOP + 11, `Src ${SOURCE_LABEL[sourceMode]}`);                // knob 2
+    line(rx, BODY_TOP + 22, `Asn ${assignedCount()}/16`);
+    line(rx, BODY_TOP + 31, `Lck ${lockedCount()}/16`);
 }
 
+/* KIT is a per-pad detail view, not a list — bespoke body inside the shared
+ * chrome. Rows at 8px from BODY_TOP. */
 function drawKitPage() {
-    /* No footer here — a pad line would just repeat what the page shows.
-     * Rows: pad / role / lock+gain / category / sample name (+status).
-     * Right edge: library reject/favourite totals + this sample's standing. */
     const p = kit.pads[selectedPad];
     const gain = (p.playback && p.playback.gain != null) ? p.playback.gain : 1;
     const pool = padPool(p.pad, config);
-    line(MX, 14, `Pad ${p.pad}`);
+    const R = (i) => BODY_TOP + 2 + i * 9;   // rows 12, 21, 30, 39, 48
+
+    line(MX, R(0), `Pad ${p.pad}`);
     if (seqMode) {
-        /* Edit view — how many steps are set on this pad's lane, + run state. */
         let n = 0, m = seqPattern[selectedPad];
         while (m) { n += m & 1; m >>= 1; }
-        line(MX + 78, 14, `SEQ ${n}st ${seqRunning ? '▶' + (seqStep + 1) : '-'}`);
+        line(72, R(0), `SEQ ${n}st ${seqRunning ? '>' + (seqStep + 1) : '-'}`);
     } else {
-        line(MX + 88, 14, `R${rejects.size} F${favourites.size}`);
+        line(MX + 88, R(0), `R${rejects.size} F${favourites.size}`);
     }
-    line(MX, 24, `Pool  ${pool.join('/')}`);
-    line(MX, 34, `Lock ${p.locked ? 'yes' : 'no'}     Gain ${gainToDbLabel(gain)}`);
+    line(MX, R(1), `Pool  ${pool.join('/')}`);
+    line(MX, R(2), `Lock ${p.locked ? 'yes' : 'no'}     Gain ${gainToDbLabel(gain)}`);
     if (p.sample) {
         const fp = p.sample.filesystem_path;
-        if (favourites.has(fp))    line(MX + 92, 24, 'FAV');
-        else if (rejects.has(fp))  line(MX + 92, 24, 'REJ');
+        if (favourites.has(fp)) line(MX + 92, R(1), 'FAV');
+        else if (rejects.has(fp)) line(MX + 92, R(1), 'REJ');
         const cat = p.sample.category;
         const inPool = cat && pool.indexOf(cat) !== -1;
-        line(MX, 44, cat && !inPool ? `Drawn from  ${cat}` : `Category    ${cat || pool[0]}`);
+        line(MX, R(3), inPool ? `Category  ${cat}` : `Drawn from  ${cat}`);
         const st = slotStat.charAt(selectedPad);
         const tag = st === 'm' ? '(missing) ' : st === 'x' ? '(bad file) ' : st === '.' ? '(loading) ' : '';
-        line(MX, 54, tag + p.sample.filename);
+        line(MX, R(4), tag + p.sample.filename);
     } else {
-        line(MX, 44, 'Sample  -  (empty pad)');
-        line(MX, 54, 'hold pad + Assign to fill');
+        line(MX, R(3), 'Sample  -  (empty pad)');
+        line(MX, R(4), 'hold pad + Assign to fill');
     }
 }
 
-/* SYSTEM page rows below the fixed header. Up/Down scroll a 4-line window.
- * Rows 1 & 2 are the knob-1 / knob-2 controls (loop filter / size cap). */
-const SYS_VISIBLE = 4;
-let sysScroll = 0;
-
-function systemRows() {
-    const s = indexSummary;
-    return [
-        `Indexed  ${s.indexed}`,
-        `Loop filter  ${scanPrefs.skip_loops ? 'skip' : 'keep'}`,   // knob 1
-        `Max size  ${scanSizeLabel()}`,                             // knob 2
-        `Cut  ${s.skippedLoops || 0} loop / ${s.skippedOversize || 0} big`,
-        `Kick  ${s.kick}`,
-        `Snare  ${s.snare}`,
-        `Clap  ${s.clap}`,
-        `Hats  ${s.hats}`,
-        `Toms  ${s.toms}`,
-        `Perc  ${s.perc}`,
-        `Cymbals  ${s.cym}`,
-        `FX  ${s.fx}`,
-        `Other  ${s.other}`
-    ];
-}
-
-function sysScrollClamp(rows) {
-    const max = Math.max(0, rows.length - SYS_VISIBLE);
-    if (sysScroll < 0) sysScroll = 0;
-    if (sysScroll > max) sysScroll = max;
-}
-
+/* SYSTEM page — index report, everything on screen at once. Knob 1 = loop
+ * filter, knob 2 = size cap (top row). Jog-press = Rescan. */
 function drawSystemPage() {
-    /* Fixed header (RESCAN / Age / Src) + a scrollable list — Up/Down move the
-     * 4-row window. Knob 1 = loop filter, knob 2 = size cap (persist, apply on
-     * the next Rescan). Category counts are the 8 Rev. 3 buckets + Other. */
-    const scanning = !!scan;
-    button(MX, 13, 46, 12, scanning ? 'SCAN' : 'RESCAN', assignHeld && !scanning);
-    line(MX + 52, 13, `Age ${indexAgeText}`);
-    line(MX + 52, 21, `Src ${SOURCE_LABEL[sourceMode]}`);
+    const s = indexSummary;
+    line(MX, BODY_TOP + 2,  `Loop ${scanPrefs.skip_loops ? 'skip' : 'keep'}`);
+    line(70, BODY_TOP + 2,  `Max ${scanSizeLabel()}`);
+    line(MX, BODY_TOP + 11, `Idx ${s.indexed}`);
+    line(70, BODY_TOP + 11, `Cut ${s.skippedLoops || 0}L ${s.skippedOversize || 0}B`);
 
-    const rows = systemRows();
-    sysScrollClamp(rows);
-    for (let i = 0; i < SYS_VISIBLE; i++) {
-        const r = rows[sysScroll + i];
-        if (r != null) line(MX, 30 + i * 8, r);
+    const grid = [
+        ['Kck', s.kick], ['Snr', s.snare], ['Clp', s.clap],
+        ['Hat', s.hats], ['Tom', s.toms],  ['Prc', s.perc],
+        ['Cym', s.cym],  ['FX', s.fx],     ['Oth', s.other]
+    ];
+    for (let i = 0; i < grid.length; i++) {
+        const col = i % 3, row = (i / 3) | 0;
+        line(MX + col * 40, BODY_TOP + 24 + row * 9, `${grid[i][0]} ${grid[i][1]}`);
     }
-    if (sysScroll > 0) line(RX - 6, 30, '^');
-    if (sysScroll < rows.length - SYS_VISIBLE) line(RX - 6, 30 + (SYS_VISIBLE - 1) * 8, 'v');
 }
 
 function drawExportPage() {
-    /* Exporter list — [x]/[ ] toggles, last row is "Export now". Selected row
-     * inverted; jog-press acts on it. Footer shows the last result. */
-    for (let i = 0; i < EXPORT_ROWS.length; i++) {
-        const r = EXPORT_ROWS[i];
-        const y = 14 + i * 10;
-        const text = r.id === '__now' ? r.label : `${exportPrefs[r.id] ? '[x]' : '[ ]'} ${r.label}`;
-        if (i === exportSel) {
-            fill_rect(0, y - 1, RX, 9, 1);
-            print(MX, y, clamp(text, RX - MX), 0);
-        } else {
-            line(MX, y, text);
-        }
-    }
+    drawMenuList({
+        items: EXPORT_ROWS,
+        selectedIndex: exportSel,
+        getLabel: (r) => r.label,
+        getValue: (r) => (r.id === '__now' ? '' : (exportPrefs[r.id] ? 'on' : 'off')),
+        listArea: { topY: BODY_TOP, bottomY: BODY_BOTTOM }
+    });
+}
+
+/* Status toast — a shared overlay card. Held ~11 s, then dismissable by any
+ * input, but only after a short grace so the press that raised it can't clear
+ * it. Every shared call is typeof-guarded: if an older menu_layout lacks the
+ * overlay API the toast just no-ops instead of killing the handler. */
+let footerShown = null;
+let toastGrace = 0;
+const TOAST_TICKS = 480;   // ~11 s
+const TOAST_GRACE_TICKS = 20;
+
+function showToast(msg) {
+    if (typeof showOverlay === 'function') showOverlay(msg, '', TOAST_TICKS);
+    footerShown = msg;
+    toastGrace = TOAST_GRACE_TICKS;
+}
+function toastActive() {
+    return typeof isOverlayActive === 'function' && isOverlayActive();
 }
 
 function drawUI() {
     clear_screen();
     drawHeader();
-    switch (PAGES[pageIndex]) {
-        case 'RANDOM': drawRandomPage(); drawFooter(); break;   // footer: RANDOM only
+    if (seqMode) drawKitPage();
+    else switch (PAGES[pageIndex]) {
+        case 'RANDOM': drawRandomPage(); break;
         case 'KIT':    drawKitPage();    break;
         case 'SYSTEM': drawSystemPage(); break;
-        case 'EXPORT': drawExportPage(); drawFooter(); break;   // footer: last export result
+        case 'EXPORT': drawExportPage(); break;
     }
+    drawPageFooter();
+    /* Transient status -> a shared overlay card. `footer` is still set all over
+     * the code; here it just feeds the toast. */
+    if (footer && footer !== footerShown) showToast(footer);
+    if (typeof drawOverlay === 'function') drawOverlay();
 }
 
 /* ------------------------------------------------------------------ *
@@ -1357,6 +1351,12 @@ globalThis.init = function () {
     heldPad = -1;
     for (const fx of padFx) { fx.flash = 0; fx.failFlash = 0; }
     footer = 'Kit Builder ready';
+    footerShown = null;
+
+    /* E2 — start with the sequencer fully stopped and empty, in case the DSP
+     * carried a run flag / lanes across a reload. */
+    seqReset();
+    dspSet('seq_run', '0');
 
     /* Stage 2: load config, then any cached sample index (§3.1 steps 1-2). */
     scan = null;
@@ -1421,6 +1421,9 @@ globalThis.tick = function () {
 
     /* The Save keyboard draws its own screen and manages its own pad LEDs. */
     if (isTextEntryActive()) { tickTextEntry(); drawTextEntry(); return; }
+
+    if (toastGrace > 0) toastGrace--;
+    if (typeof tickOverlay === 'function' && tickOverlay()) needsRedraw = true;   // toast timed out
 
     if (ledInitPending) setupLedBatch();
 

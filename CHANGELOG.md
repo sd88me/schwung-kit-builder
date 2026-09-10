@@ -2,6 +2,41 @@
 
 All notable changes to Kit Builder are recorded here.
 
+## [0.3.1] — 2026-09-10
+
+Display overhaul + sequencer fixes.
+
+### Shared UI chrome
+
+- **Header** → the shared `drawMenuHeader` (`menu_layout.mjs`) — the standard
+  movy top strip (kit name left, page name right), same as `mono` and the
+  other Schwung modules. Replaces the hand-drawn title + separator.
+- **Footer** → `drawMenuFooter` hint pills on *every* page — contextual
+  key→action hints (`Jog:page`, `Clk:Assign`, `K1:pad`, …). Previously only
+  the RANDOM page had a footer and it was a bare status string.
+- **Transient status** ("Assigned 14 pads", "Saved: …", "Rescan to apply", …)
+  → a shared overlay-card toast (`showOverlay`), held ~11 s and dismissable by
+  any input after a short grace. No more persistent bottom line. Every shared
+  call is `typeof`-guarded so an older `menu_layout` degrades to a no-op
+  rather than breaking input.
+- **EXPORT page** body → the shared scrolling `drawMenuList` widget.
+- RANDOM and SYSTEM keep purpose-built compact bodies inside the new chrome
+  (RANDOM: actions + the Dup/Src/Asn/Lck controls; SYSTEM: the filter
+  controls + a 3×3 category-count grid — both fit without scrolling).
+- KIT stays a bespoke per-pad detail view, refitted into the shared band.
+
+### Sequencer fixes
+
+- `init()` now force-clears the sequencer (`seqReset` + `seq_run=0`) on every
+  module start — nothing can be left playing "from before" after a reopen.
+- **Play always toggles run/stop** — dropped a guard that could refuse to stop
+  when it judged the pattern empty. `New` also fully clears the sequencer.
+
+### Other
+
+- The init log line reported `v0.1.0` regardless of the real version — now
+  tracks `module.json`.
+
 ## [0.3.0] — 2026-09-10
 
 Batch E — engine v2 (loudness matching + audition step sequencer). Includes
