@@ -2,10 +2,10 @@
 
 All notable changes to Kit Builder are recorded here.
 
-## [0.3.0] — unreleased
+## [0.3.0] — 2026-09-10
 
-Batch E — engine v2. `module.json` / `release.json` still say 0.2.0; bump on
-device verification.
+Batch E — engine v2 (loudness matching + audition step sequencer). Includes
+everything from the unreleased 0.2.0 line below (post-MVP Batches A–G).
 
 ### E1 — automatic loudness matching
 

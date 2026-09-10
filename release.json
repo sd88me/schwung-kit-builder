@@ -1,9 +1,9 @@
 {
   "id": "kit-builder",
   "name": "Kit Builder",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "component_type": "overtake",
-  "stage": "post-MVP (Batches A–G)",
-  "download_url": "https://github.com/sd88me/schwung-kit-builder/releases/download/v0.2.0/kit-builder-module.tar.gz",
-  "notes": "v0.2.0 post-MVP: per-pad gain trim + single-pad re-roll; Core Library as a sample source; library-wide reject/favourite memory; EXPORT page with MrDrums .ablpreset + MPC .xpm export (samples gathered beside the .xpm, MANIFEST fallback); scan-time loop/size filters (SYSTEM knobs); WAV metadata stripping; full 42-param drumCell in the MrDrums preset. Revision 3 category/pad model: 22 classification categories, config.pad_layout union pools (no fallback chain), filename fallback for classification, scrollable SYSTEM page. schwung-manager reads version + download_url."
+  "stage": "post-MVP (Batches A–G + E)",
+  "download_url": "https://github.com/sd88me/schwung-kit-builder/releases/download/v0.3.0/kit-builder-module.tar.gz",
+  "notes": "v0.3.0 adds engine-v2 (Batch E): automatic loudness matching (peak-window RMS, attenuate-only per-pad makeup gain via the RANDOM-page \"Match Levels\" action) and an audition step sequencer (internal 16-step clock at Move tempo, Rec = edit view, Play = run, one 16-bit lane per pad, transient). Also includes the unreleased 0.2.0 line: EXPORT page + MrDrums .ablpreset and MPC .xpm export (samples gathered beside the .xpm), scan-time loop/size filters, WAV metadata stripping, and the Revision 3 category/pad model (22 categories, config.pad_layout union pools, filename-fallback classification). schwung-manager reads version + download_url."
 }
