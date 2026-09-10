@@ -20,9 +20,9 @@ export const DEFAULT_PAD_LAYOUT = [
     ['snare'],                         // 3
     ['clap', 'percussion'],            // 4
     ['percussion', 'tom', 'conga'],    // 5
-    ['hat'],                           // 6
-    ['closed_hat'],                    // 7
-    ['open_hat'],                      // 8
+    ['hat', 'closed_hat', 'open_hat'], // 6  generic hat pad (any kind)
+    ['closed_hat', 'hat'],             // 7  falls back to generic hats
+    ['open_hat', 'hat'],               // 8  falls back to generic hats
     ['ride', 'cymbal', 'crash'],       // 9
     ['tom', 'percussion', 'conga'],    // 10
     ['percussion'],                    // 11

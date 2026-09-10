@@ -147,4 +147,16 @@ export const tests = [
         // no filename arg (toggle off) -> folder-only, current behaviour
         eq(classify(['One Shots'], idx), 'other');
     }},
+
+    { name: 'classify: a generic "hat" folder is refined by the filename', fn() {
+        // real case: CoreLibrary/Drums/Hihat/"Hihat Closed DM Accent.wav"
+        eq(classify(['Hihat'], idx, 'Hihat Closed DM Accent.wav'), 'closed_hat');
+        eq(classify(['Hihat'], idx, 'Hihat Open 707.aif'), 'open_hat');
+        eq(classify(['Drums', 'Hats'], idx, 'CH_808.wav'), 'closed_hat');
+        eq(classify(['Hi-Hats'], idx, 'OH vinyl 3.wav'), 'open_hat');
+        // filename not specific -> stays the generic hat
+        eq(classify(['Hihat'], idx, 'Hihat Vinyl 3.wav'), 'hat');
+        // only "hat" is refined — a real closed/open folder is never downgraded
+        eq(classify(['Closed Hats'], idx, 'something open.wav'), 'closed_hat');
+    }},
 ];

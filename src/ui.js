@@ -639,13 +639,15 @@ function seqHasSteps() {
     return false;
 }
 
-/* Rec button — enter / leave the pattern-edit view. Playback (Play) is
- * independent, so leaving edit mode does not stop a running sequence. */
+/* Rec button — enter / leave pattern-edit. The step buttons + their LEDs are
+ * the whole UI (no on-screen grid — it added nothing); on enter we jump to the
+ * KIT page so the pad being edited and its sample are visible. Playback (Play)
+ * is independent, so leaving edit mode does not stop a running sequence. */
 function toggleSeqMode() {
     seqMode = !seqMode;
     setButtonLED(MoveRec, seqMode ? Red : Black, true);
     if (seqMode) {
-        selectedPad = Math.max(0, Math.min(PAD_COUNT - 1, selectedPad));
+        pageIndex = PAGES.indexOf('KIT');
         footer = `Seq: pad ${selectedPad + 1} — steps edit, Play runs`;
     } else {
         footer = seqRunning ? 'Seq running (Rec to edit)' : 'Seq edit closed';
@@ -1216,7 +1218,14 @@ function drawKitPage() {
     const gain = (p.playback && p.playback.gain != null) ? p.playback.gain : 1;
     const pool = padPool(p.pad, config);
     line(MX, 14, `Pad ${p.pad}`);
-    line(MX + 88, 14, `R${rejects.size} F${favourites.size}`);
+    if (seqMode) {
+        /* Edit view — how many steps are set on this pad's lane, + run state. */
+        let n = 0, m = seqPattern[selectedPad];
+        while (m) { n += m & 1; m >>= 1; }
+        line(MX + 78, 14, `SEQ ${n}st ${seqRunning ? '▶' + (seqStep + 1) : '-'}`);
+    } else {
+        line(MX + 88, 14, `R${rejects.size} F${favourites.size}`);
+    }
     line(MX, 24, `Pool  ${pool.join('/')}`);
     line(MX, 34, `Lock ${p.locked ? 'yes' : 'no'}     Gain ${gainToDbLabel(gain)}`);
     if (p.sample) {
@@ -1300,35 +1309,8 @@ function drawExportPage() {
     }
 }
 
-function drawSeqPage() {
-    /* Full-screen while Rec-edit is open. Shows the selected pad's 16-step lane
-     * with the playhead; Knob 1 changes the pad, step buttons toggle steps. */
-    const p = kit.pads[selectedPad];
-    const mask = seqPattern[selectedPad];
-    line(MX, 13, `SEQ  Pad ${selectedPad + 1}`);
-    line(MX + 74, 13, seqRunning ? `RUN ${seqStep + 1}` : 'STOP');
-    line(MX, 23, p.sample ? clamp(p.sample.filename, RX - MX) : '(empty pad)');
-
-    /* 16 cells in two rows of 8: filled = armed, [] = playhead. */
-    const cw = 13;
-    for (let r = 0; r < 2; r++) {
-        for (let c = 0; c < 8; c++) {
-            const i = r * 8 + c;
-            const x = MX + c * cw;
-            const y = 34 + r * 11;
-            const on = !!(mask & (1 << i));
-            const head = seqRunning && i === seqStep;
-            if (on) fill_rect(x, y - 7, cw - 3, 9, 1);
-            print(x + 2, y, String(i + 1), on ? 0 : 1);
-            if (head) { print(x, y + 1, '_', 1); }
-        }
-    }
-    line(MX, FULL_BOTTOM, 'Rec=close  Play=run  Steps=edit  K1=pad');
-}
-
 function drawUI() {
     clear_screen();
-    if (seqMode) { drawHeader(); drawSeqPage(); return; }
     drawHeader();
     switch (PAGES[pageIndex]) {
         case 'RANDOM': drawRandomPage(); drawFooter(); break;   // footer: RANDOM only

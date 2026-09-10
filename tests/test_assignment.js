@@ -39,7 +39,8 @@ const FULL = fakeIndex({
 const OTHER = otherPoolCats(DEFAULT_CONFIG, DEFAULT_CONFIG.pad_layout);
 const POOLS = [
     ['kick'], ['rim', 'snare'], ['snare'], ['clap', 'percussion'],
-    ['percussion', 'tom', 'conga'], ['hat'], ['closed_hat'], ['open_hat'],
+    ['percussion', 'tom', 'conga'],
+    ['hat', 'closed_hat', 'open_hat'], ['closed_hat', 'hat'], ['open_hat', 'hat'],
     ['ride', 'cymbal', 'crash'], ['tom', 'percussion', 'conga'], ['percussion'], ['fx'],
     OTHER, OTHER, OTHER, OTHER
 ];

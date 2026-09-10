@@ -98,6 +98,16 @@ export function classify(dirComponents, aliasIndex, filename) {
         const hit = aliasIndex.get(normalizeToken(comp));
         if (hit) role = hit; // keep going: a deeper component may override
     }
-    if (role === 'other' && filename) role = classifyFilename(filename, aliasIndex);
+    if (!filename) return role;
+
+    if (role === 'other') {
+        role = classifyFilename(filename, aliasIndex);
+    } else if (role === 'hat') {
+        /* A "Hi-Hats" folder is generic, but the file often says which kind
+         * ("Hihat Closed …", "OH_909 …"). Promote hat -> closed/open when the
+         * filename is specific. */
+        const fn = classifyFilename(filename, aliasIndex);
+        if (fn === 'closed_hat' || fn === 'open_hat') role = fn;
+    }
     return role;
 }
