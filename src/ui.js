@@ -65,6 +65,7 @@
 import {
     MidiNoteOn, MidiNoteOff, MidiCC,
     MoveShift, MoveBack, MoveMainButton, MoveMainKnob, MoveUp, MoveDown,
+    MovePlay, MoveRec,
     MoveKnob1, MovePads, MoveSteps,
     Black, White, DarkGrey,
     Green, Red, Blue,
@@ -221,6 +222,16 @@ let favourites = new Set();
 let exportSel = 0;
 let exportPrefs = { mrdrums: true, mpcxpm: false };
 
+/* E2 — audition step sequencer. Rec toggles the edit view; Play toggles run.
+ * 16 fixed steps, one 16-bit mask per pad. Transient: not saved, not exported. */
+let seqMode = false;                          // Rec view — step buttons edit the grid
+let seqRunning = false;                       // Play — clock running (DSP owns the real one)
+let seqStep = 0;                              // playhead, polled from the DSP
+let seqPollTick = 0;
+const seqPattern = new Array(PAD_COUNT).fill(0);
+const SEQ_STEP_ON = DarkCyanTeal;            // an armed step
+const SEQ_STEP_HEAD = White;                 // the playhead
+
 let assignHeld = false;         // jog-press currently down
 let assignInFlight = 0;         // >0 while an Assign is settling (reentrancy guard)
 let assignFireCount = 0;
@@ -299,22 +310,31 @@ function paintPads() {
     for (let i = 0; i < PAD_COUNT; i++) paintPad(i);
 }
 
-/* Step buttons 1..N carry the RANDOM action colours; the rest stay dark. */
-function paintStepLeds() {
-    for (let i = 0; i < MoveSteps.length; i++) {
-        setLED(MoveSteps[i], i < RANDOM_ACTIONS.length ? RANDOM_ACTIONS[i].color : Black);
+/* Colour for step button `i`: the sequencer grid while editing, otherwise the
+ * RANDOM action shortcuts. */
+function stepLedColor(i) {
+    if (seqMode) {
+        if (seqRunning && i === seqStep) return SEQ_STEP_HEAD;
+        return (seqPattern[selectedPad] & (1 << i)) ? SEQ_STEP_ON : Black;
     }
+    return i < RANDOM_ACTIONS.length ? RANDOM_ACTIONS[i].color : Black;
+}
+
+function paintStepLeds() {
+    for (let i = 0; i < MoveSteps.length; i++) setLED(MoveSteps[i], stepLedColor(i));
 }
 
 /* Build the full LED list once; setupLedBatch feeds it out ≤8/frame. */
 function buildLedList() {
     const leds = [];
     leds.push({ type: 'cc', id: MoveBack, color: WhiteLedDim });
+    leds.push({ type: 'cc', id: MoveRec, color: seqMode ? Red : Black });
+    leds.push({ type: 'cc', id: MovePlay, color: seqRunning ? Green : Black });
     for (let i = 0; i < PAD_COUNT; i++) {
         leds.push({ type: 'note', id: KIT_PAD_NOTES[i], color: ledForPad(i) });
     }
     for (let i = 0; i < MoveSteps.length; i++) {
-        leds.push({ type: 'note', id: MoveSteps[i], color: i < RANDOM_ACTIONS.length ? RANDOM_ACTIONS[i].color : Black });
+        leds.push({ type: 'note', id: MoveSteps[i], color: stepLedColor(i) });
     }
     for (const note of UNUSED_PAD_NOTES) {
         leds.push({ type: 'note', id: note, color: Black });
@@ -342,11 +362,13 @@ function setupLedBatch() {
  * clears them, so they are already dark here. */
 function paintAllLeds(force) {
     setButtonLED(MoveBack, WhiteLedDim, force);
+    setButtonLED(MoveRec, seqMode ? Red : Black, force);
+    setButtonLED(MovePlay, seqRunning ? Green : Black, force);
     for (let i = 0; i < PAD_COUNT; i++) {
         setLED(KIT_PAD_NOTES[i], ledForPad(i), force);
     }
-    for (let i = 0; i < RANDOM_ACTIONS.length; i++) {
-        setLED(MoveSteps[i], RANDOM_ACTIONS[i].color, force);
+    for (let i = 0; i < MoveSteps.length; i++) {
+        setLED(MoveSteps[i], stepLedColor(i), force);
     }
 }
 
@@ -513,8 +535,9 @@ function fireNew() {
     currentKitName = null;
     soundingMask = 0;
     dspSet('clear_all', '1');
+    seqReset();                 // E2 — a fresh slate clears the pattern too
     persistWorkingKit();
-    paintPads();
+    requestFullLedRepaint();
     footer = 'New kit';
     console.log(`${MODULE_TAG}: new kit`);
     needsRedraw = true;
@@ -607,6 +630,66 @@ function fireMatchLevels() {
     persistWorkingKit();
     footer = `Levels matched — ${n} pad${n === 1 ? '' : 's'}`;
     needsRedraw = true;
+}
+
+/* ---- E2 audition step sequencer -------------------------------------- */
+
+function seqHasSteps() {
+    for (let i = 0; i < PAD_COUNT; i++) if (seqPattern[i]) return true;
+    return false;
+}
+
+/* Rec button — enter / leave the pattern-edit view. Playback (Play) is
+ * independent, so leaving edit mode does not stop a running sequence. */
+function toggleSeqMode() {
+    seqMode = !seqMode;
+    setButtonLED(MoveRec, seqMode ? Red : Black, true);
+    if (seqMode) {
+        selectedPad = Math.max(0, Math.min(PAD_COUNT - 1, selectedPad));
+        footer = `Seq: pad ${selectedPad + 1} — steps edit, Play runs`;
+    } else {
+        footer = seqRunning ? 'Seq running (Rec to edit)' : 'Seq edit closed';
+    }
+    requestFullLedRepaint();   // step LEDs switch between grid and action colours
+    needsRedraw = true;
+}
+
+/* Play button — run / stop. Works whenever the sequencer "exists" (edit view
+ * open or a pattern already programmed). */
+function toggleSeqRun() {
+    if (!seqMode && !seqHasSteps()) {
+        footer = 'Sequencer empty — press Rec to program it';
+        needsRedraw = true;
+        return;
+    }
+    seqRunning = !seqRunning;
+    dspSet('seq_run', seqRunning ? '1' : '0');
+    if (seqRunning) dspSet('seq_fg', '1');
+    if (!seqRunning) seqStep = 0;
+    setButtonLED(MovePlay, seqRunning ? Green : Black, true);
+    footer = seqRunning ? 'Seq running' : 'Seq stopped';
+    paintStepLeds();
+    needsRedraw = true;
+}
+
+/* Toggle step `st` in the selected pad's lane and push it to the DSP. */
+function seqToggleStep(st) {
+    if (st < 0 || st > 15) return;
+    seqPattern[selectedPad] ^= (1 << st);
+    dspSet('seq_lane_' + selectedPad, String(seqPattern[selectedPad]));
+    paintStepLeds();
+    needsRedraw = true;
+}
+
+/* Clear the whole pattern + stop (called by New). */
+function seqReset() {
+    seqPattern.fill(0);
+    seqRunning = false;
+    seqMode = false;
+    seqStep = 0;
+    dspSet('seq_clear', '1');
+    setButtonLED(MoveRec, Black, true);
+    setButtonLED(MovePlay, Black, true);
 }
 
 /* Step button `idx` (0-based) pressed: single = select the matching RANDOM
@@ -850,7 +933,8 @@ globalThis.onMidiMessageInternal = function (data) {
          * fires it. */
         const stepIdx = MoveSteps.indexOf(d1);
         if (stepIdx >= 0) {
-            if (isOn && stepIdx < RANDOM_ACTIONS.length) onStepAction(stepIdx);
+            if (isOn && seqMode) seqToggleStep(stepIdx);
+            else if (isOn && stepIdx < RANDOM_ACTIONS.length) onStepAction(stepIdx);
             return;
         }
 
@@ -867,6 +951,14 @@ globalThis.onMidiMessageInternal = function (data) {
                 shiftHeld = d2 === 127;
                 footer = shiftHeld ? 'Shift held — Pad toggles lock' : footer;
                 needsRedraw = true;
+                return;
+
+            case MoveRec:        /* E2 — toggle the step-sequencer edit view */
+                if (d2 === 127) toggleSeqMode();
+                return;
+
+            case MovePlay:       /* E2 — run / stop the sequencer */
+                if (d2 === 127) toggleSeqRun();
                 return;
 
             /* Back is NOT handled here: with capabilities.suspend_keeps_js the
@@ -913,6 +1005,15 @@ globalThis.onMidiMessageInternal = function (data) {
             case KNOB_PAD_SELECT: {   /* CC 71 = knob 1 */
                 const delta = decodeDelta(d2);
                 if (delta === 0) return;
+
+                if (seqMode) {
+                    /* Pick the pad whose 16-step lane the step buttons edit. */
+                    const dir = delta > 0 ? 1 : -1;
+                    selectedPad = Math.max(0, Math.min(PAD_COUNT - 1, selectedPad + dir));
+                    paintStepLeds();
+                    needsRedraw = true;
+                    return;
+                }
 
                 if (PAGES[pageIndex] === 'RANDOM') {
                     /* Duplicates enum — CW = Allow, CCW = Avoid (§13.2).
@@ -1199,8 +1300,35 @@ function drawExportPage() {
     }
 }
 
+function drawSeqPage() {
+    /* Full-screen while Rec-edit is open. Shows the selected pad's 16-step lane
+     * with the playhead; Knob 1 changes the pad, step buttons toggle steps. */
+    const p = kit.pads[selectedPad];
+    const mask = seqPattern[selectedPad];
+    line(MX, 13, `SEQ  Pad ${selectedPad + 1}`);
+    line(MX + 74, 13, seqRunning ? `RUN ${seqStep + 1}` : 'STOP');
+    line(MX, 23, p.sample ? clamp(p.sample.filename, RX - MX) : '(empty pad)');
+
+    /* 16 cells in two rows of 8: filled = armed, [] = playhead. */
+    const cw = 13;
+    for (let r = 0; r < 2; r++) {
+        for (let c = 0; c < 8; c++) {
+            const i = r * 8 + c;
+            const x = MX + c * cw;
+            const y = 34 + r * 11;
+            const on = !!(mask & (1 << i));
+            const head = seqRunning && i === seqStep;
+            if (on) fill_rect(x, y - 7, cw - 3, 9, 1);
+            print(x + 2, y, String(i + 1), on ? 0 : 1);
+            if (head) { print(x, y + 1, '_', 1); }
+        }
+    }
+    line(MX, FULL_BOTTOM, 'Rec=close  Play=run  Steps=edit  K1=pad');
+}
+
 function drawUI() {
     clear_screen();
+    if (seqMode) { drawHeader(); drawSeqPage(); return; }
     drawHeader();
     switch (PAGES[pageIndex]) {
         case 'RANDOM': drawRandomPage(); drawFooter(); break;   // footer: RANDOM only
@@ -1315,6 +1443,29 @@ globalThis.tick = function () {
     if (pollSounding()) { paintPads(); needsRedraw = true; }
     if (++statPollTick >= 15) { statPollTick = 0; pollSlotStatus(); }
 
+    /* E2: heartbeat so the DSP sequencer only sounds while we're foreground;
+     * follow the playhead for the step-LED walk + the SEQ page readout. */
+    if (seqRunning) {
+        dspSet('seq_fg', '1');
+        if (++seqPollTick >= 2) {
+            seqPollTick = 0;
+            const v = String(dspGet('seq') || '').split(' ');
+            const run = v[0] === '1';
+            const st = parseInt(v[1], 10);
+            if (Number.isFinite(st) && st !== seqStep) {
+                seqStep = st;
+                if (seqMode) paintStepLeds();
+                if (seqMode) needsRedraw = true;
+            }
+            if (!run && seqRunning) {   // DSP paused itself (shouldn't happen foreground)
+                seqRunning = false;
+                setButtonLED(MovePlay, Black, true);
+                paintStepLeds();
+                needsRedraw = true;
+            }
+        }
+    }
+
     /* Decay per-pad LED effects (sounding flash, assignment-failure flash). */
     for (let i = 0; i < PAD_COUNT; i++) {
         const fx = padFx[i];
@@ -1351,10 +1502,18 @@ globalThis.onResume = function () {
     footer = 'Resumed';
     refreshIndexView();   /* index age is relative to now */
 
+    /* E2 (Sam's call): the sequencer comes back STOPPED after a park, playhead
+     * at step 1. The pattern + edit view are kept. */
+    if (seqRunning) { seqRunning = false; seqStep = 0; footer = 'Resumed — seq stopped'; }
+
     /* The overtake DSP may have been reloaded (fresh, empty) while parked —
-     * re-push the kit's samples. */
+     * re-push the kit's samples + the pattern. */
     soundingMask = 0;
     syncAllSlots();
+    dspSet('seq_run', '0');
+    for (let i = 0; i < PAD_COUNT; i++) {
+        if (seqPattern[i]) dspSet('seq_lane_' + i, String(seqPattern[i]));
+    }
 
     /* Hardware was cleared while parked. Drop the LED cache so nothing is
      * suppressed, then repaint our whole surface now (not deferred), and

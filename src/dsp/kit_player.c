@@ -14,7 +14,16 @@
 
 #include "host/plugin_api_v1.h"
 
+/* Host callbacks — captured in move_plugin_init_v2, used read-only from
+ * render_block for tempo (E2 sequencer). Single plugin instance, so a
+ * file-static is fine. Every field is NULL-guarded at the call site. */
+static const host_api_v1_t *g_host = NULL;
+
 #define NSLOTS            16
+/* E2 sequencer: how many render blocks without a "seq_fg" heartbeat from the
+ * UI before playback pauses + resets to step 1. tick() (~44 Hz) pumps the
+ * heartbeat; a park freezes tick(), so ~30 blocks (~87 ms) means backgrounded. */
+#define FG_TIMEOUT_BLOCKS 30
 /* One-shot drum hits are short; anything longer is trimmed on load so a stray
  * long sample can't hog memory or play past the point of use (spec §25). */
 #define MAX_SLOT_SECONDS  5
@@ -89,6 +98,14 @@ typedef struct {
     volatile int loader_run;
     volatile int ready;
     volatile int muted;        /* 1 = ignore new note-ons (keyboard is open) */
+
+    /* E2 audition step sequencer. 16 steps (fixed), one 16-bit lane per pad.
+     * seq_frac accumulates 16th-note steps at Move's tempo; render thread only. */
+    volatile uint16_t seq_lane[NSLOTS];
+    volatile int seq_run;      /* 1 = playing (Play toggles it) */
+    volatile int seq_step;     /* published playhead, 0..15 */
+    double       seq_frac;
+    volatile int fg_blocks;    /* render blocks since the last "seq_fg" heartbeat */
 } kit_t;
 
 /* ---- audio decode: WAV + AIFF (loader thread only) ------------------- */
@@ -440,18 +457,10 @@ static void destroy_instance(void *inst) {
     free(k);
 }
 
-static void on_midi(void *inst, const uint8_t *msg, int len, int source) {
-    (void)source;
-    if (!inst || len < 3) return;
-    kit_t *k = (kit_t *)inst;
-    int type = msg[0] & 0xF0;
-    if (type != 0x90 && type != 0x80) return;
-
-    int i = slot_for_note(msg[1]);
-    if (i < 0) return;
-
-    int vel = msg[2];
-    if (type == 0x80 || vel == 0) return;        /* one-shot: ignore note-off */
+/* Start slot i's voice at `vel` (0..127). Audio-thread safe: atomic loads /
+ * stores only, no alloc / lock. Called from on_midi and the sequencer. */
+static void trigger_slot(kit_t *k, int i, int vel) {
+    if (i < 0 || i >= NSLOTS) return;
     if (__atomic_load_n(&k->muted, __ATOMIC_ACQUIRE)) return;   /* keyboard open */
 
     sample_t *smp = __atomic_load_n(&k->slots[i].cur, __ATOMIC_ACQUIRE);
@@ -464,8 +473,53 @@ static void on_midi(void *inst, const uint8_t *msg, int len, int source) {
     __atomic_store_n(&v->active, 1, __ATOMIC_RELEASE);
 }
 
+static void on_midi(void *inst, const uint8_t *msg, int len, int source) {
+    (void)source;
+    if (!inst || len < 3) return;
+    kit_t *k = (kit_t *)inst;
+    int type = msg[0] & 0xF0;
+    if (type != 0x90 && type != 0x80) return;
+
+    int i = slot_for_note(msg[1]);
+    if (i < 0) return;
+
+    int vel = msg[2];
+    if (type == 0x80 || vel == 0) return;        /* one-shot: ignore note-off */
+    trigger_slot(k, i, vel);
+}
+
+/* E2 — advance the step clock and fire this block's step(s). Runs at the top
+ * of render_block (audio thread). Tempo follows Move's global BPM; playback is
+ * gated by the "seq_fg" heartbeat so it only sounds while the tool is up. */
+static void seq_tick(kit_t *k, int frames) {
+    if (!k) return;
+    if (k->fg_blocks < 1000000) k->fg_blocks++;
+    int foreground = k->fg_blocks < FG_TIMEOUT_BLOCKS;
+
+    if (!k->seq_run || !foreground || __atomic_load_n(&k->muted, __ATOMIC_ACQUIRE)) {
+        if (!foreground) { k->seq_step = 0; k->seq_frac = 0.0; }   /* park -> reset to step 1 */
+        return;
+    }
+
+    float bpm = (g_host && g_host->get_bpm) ? g_host->get_bpm() : 120.0f;
+    if (!(bpm >= 20.0f && bpm <= 400.0f)) bpm = 120.0f;
+    /* 16 steps per bar = 16th notes: steps/sec = bpm/60 * 4 */
+    double steps_per_frame = (double)bpm / 60.0 * 4.0 / (double)MOVE_SAMPLE_RATE;
+    k->seq_frac += steps_per_frame * (double)frames;
+
+    int guard = 0;
+    while (k->seq_frac >= 1.0 && guard++ < 64) {
+        k->seq_frac -= 1.0;
+        int st = (k->seq_step + 1) & 15;
+        k->seq_step = st;
+        for (int i = 0; i < NSLOTS; i++)
+            if (k->seq_lane[i] & (uint16_t)(1u << st)) trigger_slot(k, i, 100);
+    }
+}
+
 static void render_block(void *inst, int16_t *out, int frames) {
     if (frames > MOVE_FRAMES_PER_BLOCK) frames = MOVE_FRAMES_PER_BLOCK;
+    seq_tick((kit_t *)inst, frames);
 
     /* Sum every voice in float, then clip once per block (a per-voice int16
      * clamp compounds into audible crunch on dense hits). Stack buffer — no
@@ -557,6 +611,30 @@ static void set_param(void *inst, const char *key, const char *val) {
         }
     } else if (strcmp(key, "mute") == 0) {
         __atomic_store_n(&k->muted, (val && val[0] == '1') ? 1 : 0, __ATOMIC_RELEASE);
+    } else if (strcmp(key, "seq_fg") == 0) {           /* E2 foreground heartbeat */
+        k->fg_blocks = 0;
+    } else if (strcmp(key, "seq_run") == 0) {
+        int on = (val && val[0] == '1');
+        if (on && !k->seq_run) {
+            /* fire step 0 on the very first block after Play */
+            k->seq_step = 15;
+            k->seq_frac = 1.0;
+            k->fg_blocks = 0;
+        } else if (!on) {
+            k->seq_step = 0;
+            k->seq_frac = 0.0;
+        }
+        k->seq_run = on;
+    } else if (strncmp(key, "seq_lane_", 9) == 0) {
+        int i = atoi(key + 9);
+        if (i < 0 || i >= NSLOTS) return;
+        long m = val ? atol(val) : 0;
+        k->seq_lane[i] = (uint16_t)(m & 0xFFFF);
+    } else if (strcmp(key, "seq_clear") == 0) {
+        for (int i = 0; i < NSLOTS; i++) k->seq_lane[i] = 0;
+        k->seq_run = 0;
+        k->seq_step = 0;
+        k->seq_frac = 0.0;
     }
 }
 
@@ -601,6 +679,10 @@ static int get_param(void *inst, const char *key, char *buf, int buf_len) {
         }
         return n;
     }
+
+    if (strcmp(key, "seq") == 0) {   /* E2 -> "<run> <playhead-step>" */
+        return snprintf(buf, buf_len, "%d %d", k ? k->seq_run : 0, k ? k->seq_step : 0);
+    }
     return -1;
 }
 
@@ -621,6 +703,6 @@ static plugin_api_v2_t g_api = {
 };
 
 plugin_api_v2_t *move_plugin_init_v2(const host_api_v1_t *host) {
-    (void)host;
+    g_host = host;   /* used read-only for get_bpm() (E2); every field NULL-guarded */
     return &g_api;
 }

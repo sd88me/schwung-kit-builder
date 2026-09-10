@@ -21,6 +21,16 @@
  *                             x decode-error  . loading
  *   get_param "loudness"   -> 16 space-separated RMS fractions (0..~1), one per
  *                             slot; 0 = empty / not loaded (E1 loudness match)
+ *
+ * E2 audition step sequencer (16 fixed steps, one 16-bit lane per pad):
+ *   set_param "seq_run"    = "1"/"0"  play / stop (stop resets playhead to 0)
+ *   set_param "seq_lane_<N>" = decimal step mask (0..65535) for pad N
+ *   set_param "seq_clear"  = clear all lanes and stop
+ *   set_param "seq_fg"     = "1"  foreground heartbeat; without one for
+ *                            ~30 render blocks the sequencer pauses + resets
+ *                            (so a parked tool goes silent)
+ *   get_param "seq"        -> "<run> <playhead-step>"
+ * Tempo follows the host's global BPM (host_api get_bpm()).
  */
 #ifndef KIT_PLAYER_H
 #define KIT_PLAYER_H
