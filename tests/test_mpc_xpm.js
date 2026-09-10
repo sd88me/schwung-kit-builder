@@ -46,9 +46,9 @@ export const tests = [
         ], 'Kit A'));
         eq(padCount, 3);
         eq(manifest.map((m) => m.pad), [1, 2, 16]);
-        assert(text.includes('<SampleName>Kit_A-01-Big_Kick</SampleName>'), 'pad 1 name');
-        assert(text.includes('<SampleName>Kit_A-02-snare_1</SampleName>'), 'pad 2 name');
-        assert(text.includes('<SampleName>Kit_A-16-zap</SampleName>'), 'pad 16 name');
+        assert(text.includes('<SampleName>Big Kick</SampleName>'), 'pad 1 name = source basename');
+        assert(text.includes('<SampleName>snare 1</SampleName>'), 'pad 2 name');
+        assert(text.includes('<SampleName>zap</SampleName>'), 'pad 16 name');
         // template's first-instrument sample name must be gone
         assert(!text.includes('PRGKIT26BD1'), 'template placeholder leaked');
         // an unassigned pad (3) keeps an empty name
@@ -77,10 +77,12 @@ export const tests = [
         assert(text.includes('}</ProgramPads-v2.10>\r\n'), 'progpads closes with CRLF');
     }},
 
-    { name: 'mpcSampleName: no extension, safe chars, capped, pad-numbered', fn() {
-        eq(mpcSampleName('Kit A', 3, 'Deep Kick 01.wav'), 'Kit_A-03-Deep_Kick_01');
-        eq(mpcSampleName('K', 12, 'a/b\\c.aif'), 'K-12-c');
-        assert(mpcSampleName('very long kit name here', 1, 'and a very long sample name too.wav').length <= 42);
+    { name: 'mpcSampleName: source basename only, no extension, spaces kept, capped', fn() {
+        eq(mpcSampleName('Deep Kick 01.wav'), 'Deep Kick 01');
+        eq(mpcSampleName('a/b\\c.aif'), 'c');                    // basename, ext dropped
+        eq(mpcSampleName('Kick (Hard).wav'), 'Kick (Hard)');     // spaces + parens kept
+        eq(mpcSampleName('808 Boom!.wav'), '808 Boom');          // unsafe punctuation -> _, trailing trimmed
+        assert(mpcSampleName('a really quite long sample name that runs past the forty-two cap.wav').length <= 42);
     }},
 
     { name: 'exportXpm writes .xpm + MANIFEST, makes the folder, reports path', fn() {
@@ -94,11 +96,83 @@ export const tests = [
         assert(r.ok, JSON.stringify(r.errors));
         eq(r.path, '/exp/MPC/RT Kit/RT Kit.xpm');
         eq(r.padCount, 2);
+        eq(r.gathered, 0);              // no copy() supplied
         assert(DIRS.includes('/exp/MPC/RT Kit'));
         assert(FS.has('/exp/MPC/RT Kit/MANIFEST.txt'));
         const man = FS.get('/exp/MPC/RT Kit/MANIFEST.txt');
-        assert(man.includes('RT_Kit-01-k\t/data/UserData/UserLibrary/Samples/Kick/k.wav'));
-        assert(man.includes('RT_Kit-05-ch\t/data/UserData/UserLibrary/Samples/Closed Hat/ch.wav'));
+        assert(man.includes('place each source file'), 'manual-gather header');
+        assert(man.includes('k.wav\t/data/UserData/UserLibrary/Samples/Kick/k.wav'));
+        assert(man.includes('ch.wav\t/data/UserData/UserLibrary/Samples/Closed Hat/ch.wav'));
+        assert(!man.includes('[gathered]'), 'no gather tags without copy()');
+    }},
+
+    { name: 'buildXpm manifest carries ext + destName (source ext kept, .wav default)', fn() {
+        const kit = kitWith([[0, 'Kick', 'bd.wav'], [1, 'Perc', 'shk.AIF']], 'Ext');
+        kit.pads[2].sample = sampleFromRecord(rec('Other', 'noext'));   // no dot in name
+        const { manifest } = buildXpm(kit);
+        eq(manifest.map((m) => m.ext), ['.wav', '.aif', '.wav']);
+        eq(manifest.map((m) => m.destName), ['bd.wav', 'shk.aif', 'noext.wav']);
+    }},
+
+    { name: 'exportXpm with copy() gathers each sample beside the .xpm', fn() {
+        const FS = new Map(); const COPIES = [];
+        const kit = kitWith([[0, 'Kick', 'k.wav'], [4, 'Closed Hat', 'ch.wav']], 'G Kit');
+        const r = exportXpm(kit, {
+            dir: '/exp/MPC', name: 'G Kit',
+            write: (p, s) => { FS.set(p, s); return true; },
+            copy: (src, dest) => { COPIES.push([src, dest]); return true; }
+        });
+        assert(r.ok, JSON.stringify(r.errors));
+        eq(r.gathered, 2);
+        eq(r.warnings.length, 0);
+        eq(COPIES, [
+            ['/data/UserData/UserLibrary/Samples/Kick/k.wav', '/exp/MPC/G Kit/k.wav'],
+            ['/data/UserData/UserLibrary/Samples/Closed Hat/ch.wav', '/exp/MPC/G Kit/ch.wav']
+        ]);
+        const man = FS.get('/exp/MPC/G Kit/MANIFEST.txt');
+        assert(man.includes('were copied next to this .xpm'), 'gathered header');
+        assert(man.includes('k.wav\t/data/UserData/UserLibrary/Samples/Kick/k.wav\t[gathered]'));
+        assert(man.includes('ch.wav\t/data/UserData/UserLibrary/Samples/Closed Hat/ch.wav\t[gathered]'));
+    }},
+
+    { name: 'exportXpm: a failed copy is non-fatal — warned + tagged MISSING', fn() {
+        const FS = new Map();
+        const kit = kitWith([[0, 'Kick', 'k.wav'], [1, 'Snare', 'sn.wav']], 'P Kit');
+        const r = exportXpm(kit, {
+            dir: '/exp/MPC', name: 'P Kit',
+            write: (p, s) => { FS.set(p, s); return true; },
+            copy: (src) => src.indexOf('sn.wav') === -1     // snare copy fails
+        });
+        assert(r.ok, 'still ok — MANIFEST is the fallback');
+        eq(r.gathered, 1);
+        assert(r.warnings.some((w) => w.indexOf('could not copy') !== -1 && w.indexOf('sn.wav') !== -1), r.warnings.join('|'));
+        const man = FS.get('/exp/MPC/P Kit/MANIFEST.txt');
+        assert(man.includes('k.wav\t') && man.includes('[gathered]'));
+        assert(/sn\.wav\t.*\[MISSING/.test(man), man);
+    }},
+
+    { name: 'exportXpm: non-.wav source warns (MPC wants a .wav beside the .xpm)', fn() {
+        const kit = kitWith([[0, 'Kick', 'boom.aiff']], 'A Kit');
+        const r = exportXpm(kit, {
+            dir: '/x', name: 'A Kit',
+            write: () => true,
+            copy: () => true
+        });
+        assert(r.ok);
+        eq(r.gathered, 1);
+        assert(r.warnings.some((w) => w.indexOf('.aiff') !== -1 && w.indexOf('boom.wav') !== -1), r.warnings.join('|'));
+    }},
+
+    { name: 'manifestText: attempted vs manual header + tags', fn() {
+        const m = [{ pad: 1, sampleName: 'K-01-a', sourcePath: '/s/a.wav', ext: '.wav', destName: 'K-01-a.wav', gathered: true },
+                   { pad: 2, sampleName: 'K-02-b', sourcePath: '/s/b.wav', ext: '.wav', destName: 'K-02-b.wav', gathered: false }];
+        const manual = manifestText(m);
+        assert(manual.includes('place each source file'));
+        assert(manual.includes('K-01-a.wav\t/s/a.wav\n'), JSON.stringify(manual));
+        assert(!manual.includes('[gathered]'));
+        const done = manifestText(m, { attempted: true });
+        assert(done.includes('K-01-a.wav\t/s/a.wav\t[gathered]'));
+        assert(/K-02-b\.wav\t\/s\/b\.wav\t\[MISSING/.test(done), done);
     }},
 
     { name: 'an all-empty kit is refused', fn() {
@@ -108,9 +182,11 @@ export const tests = [
     }},
 
     { name: 'duplicate sample on two pads still yields distinct SampleNames', fn() {
-        const { text } = buildXpm(kitWith([[0, 'Kick', 'k.wav'], [1, 'Kick', 'k.wav']], 'Dup'));
-        const names = (text.match(/<SampleName>Dup-[^<]+<\/SampleName>/g) || []);
+        const { text, manifest } = buildXpm(kitWith([[0, 'Kick', 'boom.wav'], [1, 'Kick', 'boom.wav']], 'Dup'));
+        const names = manifest.map((m) => m.sampleName);
         eq(names.length, 2);
-        assert(names[0] !== names[1], names.join(' == '));
+        assert(names[0] === 'boom', names[0]);
+        assert(names[0] !== names[1], names.join(' == '));    // 2nd disambiguated (e.g. "boom 2")
+        for (const nm of names) assert(text.includes(`<SampleName>${nm}</SampleName>`), `missing ${nm}`);
     }}
 ];

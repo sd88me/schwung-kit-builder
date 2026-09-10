@@ -6,7 +6,7 @@
  * (§10.3). Not part of any audio callback (§4.1).
  */
 
-import { sampleFromRecord } from './kit_model.mjs';
+import { sampleFromRecord, DEFAULT_PAD_LAYOUT } from './kit_model.mjs';
 
 /* mulberry32 — small deterministic PRNG. Same seed -> same sequence, which,
  * with a fixed pad-processing order, gives the repeatability contract of
@@ -37,22 +37,55 @@ export function bucketByRole(index, source) {
     return byRole;
 }
 
-/*
- * Resolve one pad against the pools (spec §10.2 steps 3-8). `used` is the set
- * of sample paths already spoken for. Returns { pick, poolRole, relaxed } or
- * null when nothing is eligible even after relaxation.
- */
-export function resolveOne(pad, byRole, roleRules, rng, used, preventDuplicates, rejects, favourites) {
-    const roleChain = [pad.role].concat((roleRules[pad.role] && roleRules[pad.role].fallback_roles) || []);
-    const notRejected = (rec) => !(rejects && rejects.has(rec.filesystem_path));
+/* Rev. 3 — the category union a pad draws from. `pad_layout[i]` is a list of
+ * categories; the sentinel `["other"]` expands to every category that has no
+ * dedicated pad slot, plus `fx` (Sam's call — fx sits on pad 12 AND in the
+ * catch-all pads). Falls back to the built-in layout / list if the config is
+ * incomplete. */
+const OTHER_FALLBACK = ['vox', 'bass', 'synth', 'stab', 'chord', 'lead', 'pad', 'other', 'fx'];
 
-    let pool = [];
-    let poolRole = pad.role;
-    for (const role of roleChain) {
-        const cands = (byRole[role] || []).filter(
-            (rec) => notRejected(rec) && (!preventDuplicates || !used.has(rec.filesystem_path)));
-        if (cands.length) { pool = cands; poolRole = role; break; }
+export function otherPoolCats(config, padLayout) {
+    const all = Object.keys((config && config.role_rules) || {});
+    if (all.length < 8) return OTHER_FALLBACK.slice();
+    const slotted = new Set();
+    for (const e of padLayout) {
+        if (Array.isArray(e) && !(e.length === 1 && e[0] === 'other')) {
+            for (const c of e) slotted.add(c);
+        }
     }
+    const out = all.filter((c) => !slotted.has(c));
+    if (out.indexOf('fx') === -1) out.push('fx');
+    return out;
+}
+
+export function poolCatsForPad(padIndex, config, otherCats) {
+    const layout = (config && Array.isArray(config.pad_layout) && config.pad_layout.length === 16)
+        ? config.pad_layout : DEFAULT_PAD_LAYOUT;
+    let cats = layout[padIndex];
+    if (!Array.isArray(cats) || !cats.length) cats = ['other'];
+    if (cats.length === 1 && cats[0] === 'other') return otherCats.slice();
+    return cats.slice();
+}
+
+/*
+ * Resolve one pad against its category-union pool (spec §10.2 steps 3-8).
+ * `poolCats` is the already-expanded list of categories. `used` is the set of
+ * sample paths already spoken for. Returns { pick, poolRole, poolCat, relaxed }
+ * or null when nothing is eligible even after relaxation.
+ */
+export function resolveOne(pad, poolCats, byRole, rng, used, preventDuplicates, rejects, favourites) {
+    const notRejected = (rec) => !(rejects && rejects.has(rec.filesystem_path));
+    const poolRole = poolCats.length === 1 ? poolCats[0] : poolCats.join('/');
+
+    const union = (filterFn) => {
+        const out = [];
+        for (const cat of poolCats) {
+            for (const rec of (byRole[cat] || [])) if (filterFn(rec)) out.push(rec);
+        }
+        return out;
+    };
+
+    let pool = union((rec) => notRejected(rec) && (!preventDuplicates || !used.has(rec.filesystem_path)));
 
     /* Avoid immediately reselecting this pad's current sample (§10.5). */
     if (pad.sample && pool.length) {
@@ -60,19 +93,16 @@ export function resolveOne(pad, byRole, roleRules, rng, used, preventDuplicates,
         if (alt.length) pool = alt;
     }
 
-    /* Relaxation: after unique candidates are exhausted, allow a repeat for the
-     * role (§10.4). Rejects are never relaxed. */
+    /* Relaxation: after unique candidates are exhausted, allow a repeat from the
+     * pool (§10.4). Rejects are never relaxed. */
     let didRelax = false;
     if (!pool.length && preventDuplicates) {
-        for (const role of roleChain) {
-            let all = (byRole[role] || []).filter(notRejected);
-            if (!all.length) continue;
-            if (pad.sample) {
-                const alt = all.filter((rec) => rec.filesystem_path !== pad.sample.filesystem_path);
-                if (alt.length) all = alt;
-            }
-            pool = all; poolRole = role; didRelax = true; break;
+        let all = union(notRejected);
+        if (all.length && pad.sample) {
+            const alt = all.filter((rec) => rec.filesystem_path !== pad.sample.filesystem_path);
+            if (alt.length) all = alt;
         }
+        if (all.length) { pool = all; didRelax = true; }
     }
     if (!pool.length) return null;
 
@@ -84,7 +114,7 @@ export function resolveOne(pad, byRole, roleRules, rng, used, preventDuplicates,
     }
 
     const pick = weighted[Math.floor(rng() * weighted.length)];
-    return { pick, poolRole, relaxed: didRelax };
+    return { pick, poolRole, poolCat: pick.category, relaxed: didRelax };
 }
 
 function copyPads(kit) {
@@ -106,7 +136,6 @@ function copyPads(kit) {
 export function assignKit(opts) {
     const kit = opts.kit;
     const config = opts.config || {};
-    const roleRules = config.role_rules || {};
     const source = opts.source || 'user';
     const preventDuplicates = opts.preventDuplicates !== false;
     const seed = (opts.seed >>> 0) || randomSeed();
@@ -116,6 +145,9 @@ export function assignKit(opts) {
 
     const byRole = bucketByRole(opts.index, source);
     const pads = copyPads(kit);
+    const layout = (Array.isArray(config.pad_layout) && config.pad_layout.length === 16)
+        ? config.pad_layout : DEFAULT_PAD_LAYOUT;
+    const otherCats = otherPoolCats(config, layout);
 
     /* Samples on locked pads count as already used (§10.4). */
     const used = new Set();
@@ -130,7 +162,8 @@ export function assignKit(opts) {
         const p = pads[i];
         if (p.locked) continue;
 
-        const r = resolveOne(p, byRole, roleRules, rng, used, preventDuplicates, rejects, favourites);
+        const poolCats = poolCatsForPad(i, config, otherCats);
+        const r = resolveOne(p, poolCats, byRole, rng, used, preventDuplicates, rejects, favourites);
         if (!r) { unresolved.push({ pad: p.pad, role: p.role }); continue; }
 
         const prevPath = p.sample ? p.sample.filesystem_path : null;
@@ -163,11 +196,13 @@ export function rerollPad(opts) {
     if (src.locked) return { pad: src, changed: false, warning: 'pad is locked' };
 
     const config = opts.config || {};
-    const roleRules = config.role_rules || {};
     const source = opts.source || 'user';
     const preventDuplicates = opts.preventDuplicates !== false;
     const rng = makeRng((opts.seed >>> 0) || randomSeed());
     const byRole = bucketByRole(opts.index, source);
+    const layout = (Array.isArray(config.pad_layout) && config.pad_layout.length === 16)
+        ? config.pad_layout : DEFAULT_PAD_LAYOUT;
+    const poolCats = poolCatsForPad(i, config, otherPoolCats(config, layout));
 
     const used = new Set();
     for (let j = 0; j < kit.pads.length; j++) {
@@ -181,7 +216,7 @@ export function rerollPad(opts) {
         sample: src.sample ? Object.assign({}, src.sample) : null,
         playback: Object.assign({}, src.playback)
     };
-    const r = resolveOne(pad, byRole, roleRules, rng, used, preventDuplicates, opts.rejects || null, opts.favourites || null);
+    const r = resolveOne(pad, poolCats, byRole, rng, used, preventDuplicates, opts.rejects || null, opts.favourites || null);
     if (!r) return { pad: src, changed: false, warning: `no sample for ${src.role}` };
 
     const prevPath = pad.sample ? pad.sample.filesystem_path : null;

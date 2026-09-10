@@ -33,7 +33,11 @@ Regenerated facts, matched to the reference by `diff`:
 four fields that legitimately carry kit data: SampleName, SliceEnd,
 ProgramName, MuteGroup).
 
-## `.ablpresetbundle` (Batch D2) — TODO
+## `.ablpresetbundle` — dropped from scope (2026-09-10)
 
-Need a real Move/Live-exported `.ablpresetbundle` to match the archive layout
-before implementing. Drop one here.
+`.ablpresetbundle` is an *inbound* format (built off-device, uploaded to Move
+via Move Manager, or opened in Note). Kit Builder runs on Move and its kits
+are already there as the MrDrums `.ablpreset`, so there's no import path for
+it to serve; a kit leaving Move with its samples is Move's native
+`.ablbundle` drum-rack save. No exporter, no reference kept. `wav_strip.mjs`
+survives — it serves the MPC `.xpm` gather.

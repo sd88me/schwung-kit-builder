@@ -10,11 +10,24 @@
  * uses a different contract. */
 export const PAD_MIDI_NOTES = Array.from({ length: 16 }, (_, i) => 36 + i);
 
-/* Fallback default role labels (spec §6.4), used only if the config's
- * role_rules don't place a pad. */
-const FALLBACK_ROLE_BY_PAD = [
-    'kick', 'snare', 'clap', 'open_hat', 'closed_hat', 'percussion', 'fx',
-    'other', 'other', 'other', 'other', 'other', 'other', 'other', 'other', 'other'
+/* Rev. 3 — each pad draws from a UNION of categories (spec §7.4, adopted from
+ * github.com/klingklangmatze/drum-kit-generator PAD_LAYOUT). `["other"]` is a
+ * sentinel: the assignment engine expands it to every category with no
+ * dedicated pad slot, plus `fx`. Used only when the config omits `pad_layout`. */
+export const DEFAULT_PAD_LAYOUT = [
+    ['kick'],                          // 1
+    ['rim', 'snare'],                  // 2
+    ['snare'],                         // 3
+    ['clap', 'percussion'],            // 4
+    ['percussion', 'tom', 'conga'],    // 5
+    ['hat'],                           // 6
+    ['closed_hat'],                    // 7
+    ['open_hat'],                      // 8
+    ['ride', 'cymbal', 'crash'],       // 9
+    ['tom', 'percussion', 'conga'],    // 10
+    ['percussion'],                    // 11
+    ['fx'],                            // 12
+    ['other'], ['other'], ['other'], ['other']   // 13-16
 ];
 
 function nowIso() { return new Date().toISOString(); }
@@ -25,23 +38,26 @@ export function kitId() {
     return `${h()}${h()}-${h()}-4${h().slice(1)}-${((Math.random() * 4) | 8).toString(16)}${h().slice(1)}-${h()}${h()}${h()}`;
 }
 
-/* Which role owns a given pad number, per config.role_rules[*].pads (§7.1). */
-export function roleForPad(padNum, roleRules) {
-    if (roleRules) {
-        for (const role of Object.keys(roleRules)) {
-            const pads = (roleRules[role] && roleRules[role].pads) || [];
-            if (pads.indexOf(padNum) !== -1) return role;
-        }
-    }
-    return FALLBACK_ROLE_BY_PAD[padNum - 1] || 'other';
+/* The category-union pool for a pad (spec §7.4). `config` may carry an override
+ * `pad_layout`; otherwise DEFAULT_PAD_LAYOUT applies. Always a non-empty array. */
+export function padPool(padNum, config) {
+    const layout = (config && Array.isArray(config.pad_layout)) ? config.pad_layout : DEFAULT_PAD_LAYOUT;
+    const entry = layout[padNum - 1];
+    return (Array.isArray(entry) && entry.length) ? entry.slice() : ['other'];
+}
+
+/* The pad's primary category — first in its pool. Stored as `pad.role` for
+ * display and backward compatibility with Rev. 2 kits. */
+export function roleForPad(padNum, config) {
+    return padPool(padNum, config)[0] || 'other';
 }
 
 /* One pad object (spec §6.2 / §6.3). Empty pad -> sample: null. */
-export function makePad(padNum, roleRules) {
+export function makePad(padNum, config) {
     return {
         pad: padNum,
         midi_note: PAD_MIDI_NOTES[padNum - 1],
-        role: roleForPad(padNum, roleRules),
+        role: roleForPad(padNum, config),
         locked: false,
         sample: null,
         playback: { gain: 1.0 }   // Rev. 2: gain only
@@ -50,7 +66,6 @@ export function makePad(padNum, roleRules) {
 
 /* A fresh, empty 16-pad kit (spec §6.1, §3.1 "always opens a blank kit"). */
 export function createKit(config) {
-    const roleRules = config && config.role_rules;
     return {
         schema_version: 1,
         application: 'kit-builder',
@@ -61,7 +76,7 @@ export function createKit(config) {
         source_mode: (config && config.source_mode) || 'user',
         random_seed: 0,
         prevent_duplicates: true,
-        pads: Array.from({ length: 16 }, (_, i) => makePad(i + 1, roleRules))
+        pads: Array.from({ length: 16 }, (_, i) => makePad(i + 1, config))
     };
 }
 

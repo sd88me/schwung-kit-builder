@@ -3,3 +3,10 @@ dist/*.tar.gz
 node_modules/
 src/dsp/dsp.so
 src/dsp/*.o
+
+# Export-format reference binaries — kept locally only, not committed
+# (see docs/refs/README.md; a real MPC .xpm export is ~1.3 MB and licence-murky).
+# Windows alternate-data-stream junk from downloads too.
+docs/refs/*.xpm
+*:Zone.Identifier
+*:mshield

@@ -81,9 +81,11 @@ import {
     loadConfig, loadIndex, createScan, summarize, summarizeRecords
 } from './core/sample_index.mjs';
 
+import { SIZE_CAP_CHOICES, SIZE_CAP_LABELS } from './core/scan_filters.mjs';
+
 import {
     createKit, toggleLock, clearUnlocked, unlockAll, clearPad, setPadGain, gainToDbLabel,
-    lockedCount as kitLockedCount, assignedCount as kitAssignedCount
+    padPool, lockedCount as kitLockedCount, assignedCount as kitAssignedCount
 } from './core/kit_model.mjs';
 
 import { assignKit, rerollPad, randomSeed } from './core/random_assign.mjs';
@@ -91,7 +93,7 @@ import { assignKit, rerollPad, randomSeed } from './core/random_assign.mjs';
 import {
     saveKit, saveCurrentKit, loadCurrentKit, markMissingSamples, exportMrDrums,
     generatedKitName, nextKitNumber, commitKitNumber, loadPrefs, savePrefs,
-    runExports, loadExportPrefs, saveExportPrefs
+    runExports, loadExportPrefs, saveExportPrefs, loadScanPrefs, saveScanPrefs
 } from './core/storage.mjs';
 
 import {
@@ -198,6 +200,15 @@ const SOURCE_LABEL = { user: 'User', core: 'Core', both: 'Both' };
 let sourceMode = 'user';
 let dupKnobTicks = 0;      // accumulated encoder ticks for the Duplicates knob
 let srcKnobTicks = 0;      // accumulated encoder ticks for the Source knob
+
+/* Batch F — SYSTEM-page scan filters, persisted in config.json. */
+let scanPrefs = { skip_loops: true, max_sample_size: null };
+let scanLoopKnobTicks = 0;   // knob 1 on SYSTEM — loop filter toggle
+let scanSizeKnobTicks = 0;   // knob 2 on SYSTEM — size-cap enum
+function scanSizeLabel() {
+    const i = SIZE_CAP_CHOICES.indexOf(scanPrefs.max_sample_size);
+    return SIZE_CAP_LABELS[i >= 0 ? i : 0];
+}
 
 /* Library-wide reject / favourite memory (Batch C). Sets of filesystem_path;
  * loaded once at init, persisted on every change. Not reset by New. */
@@ -657,6 +668,8 @@ function refreshIndexView() {
     } else {
         indexSummary = summarize(indexInfo && indexInfo.counts);
     }
+    indexSummary.skippedLoops = (indexInfo && indexInfo.skipped_loops) || 0;
+    indexSummary.skippedOversize = (indexInfo && indexInfo.skipped_oversize) || 0;
     indexAgeText = relativeAge(indexInfo && indexInfo.generated_at);
 }
 
@@ -669,6 +682,7 @@ function fireRescan() {
         return;
     }
     if (!config) config = loadConfig();
+    config.scan_filters = { skip_loops: scanPrefs.skip_loops, max_sample_size: scanPrefs.max_sample_size };
     scan = createScan(config);
     if (scan.state.phase === 'error') {
         finishScan();
@@ -728,12 +742,15 @@ function finishScan() {
         indexInfo = {
             generated_at: new Date().toISOString(),
             counts: st.counts,
+            skipped_loops: st.skippedLoops || 0,
+            skipped_oversize: st.skippedOversize || 0,
             records: st.records
         };
         refreshIndexView();
         footer = `Index rebuilt: ${indexSummary.indexed} files`;
         console.log(`${MODULE_TAG}: index rebuilt files=${indexSummary.indexed} dirs=${st.dirsVisited} ` +
-            `kick=${indexSummary.kick} snare=${indexSummary.snare} hats=${indexSummary.hats} other=${indexSummary.other}`);
+            `kick=${indexSummary.kick} snare=${indexSummary.snare} hats=${indexSummary.hats} other=${indexSummary.other} ` +
+            `cut=${st.skippedLoops || 0}loop/${st.skippedOversize || 0}big`);
     } else if (st && st.error === 'no_root') {
         footer = 'No User Library sample folder found';
         console.log(`${MODULE_TAG}: rescan failed — no sample root`);
@@ -864,6 +881,10 @@ globalThis.onMidiMessageInternal = function (data) {
                     const dir = d1 === MoveDown ? 1 : -1;
                     exportSel = (exportSel + dir + EXPORT_ROWS.length) % EXPORT_ROWS.length;
                     needsRedraw = true;
+                } else if (d2 > 0 && PAGES[pageIndex] === 'SYSTEM') {
+                    /* Scroll the index-report list. */
+                    sysScroll += (d1 === MoveDown ? 1 : -1);
+                    needsRedraw = true;
                 }
                 return;
 
@@ -892,15 +913,49 @@ globalThis.onMidiMessageInternal = function (data) {
                     selectedPad = Math.max(0, Math.min(PAD_COUNT - 1, selectedPad + dir));
                     needsRedraw = true;
                 }
+
+                if (PAGES[pageIndex] === 'SYSTEM') {
+                    /* Loop filter toggle — CW = skip, CCW = keep (Batch F). */
+                    scanLoopKnobTicks += delta;
+                    if (Math.abs(scanLoopKnobTicks) < ENUM_KNOB_TICKS) return;
+                    const next = scanLoopKnobTicks > 0;
+                    scanLoopKnobTicks = 0;
+                    if (next !== scanPrefs.skip_loops) {
+                        scanPrefs.skip_loops = next;
+                        saveScanPrefs(scanPrefs);
+                        sysScroll = 0;   // bring the Loop-filter row into view
+                        footer = `Loops: ${next ? 'skip' : 'keep'} — Rescan to apply`;
+                        needsRedraw = true;
+                    }
+                }
                 return;
             }
 
             case KNOB_SOURCE: {
+                const delta = decodeDelta(d2);
+                if (delta === 0) return;
+
+                if (PAGES[pageIndex] === 'SYSTEM') {
+                    /* Size-cap enum: Off -> 1M -> 2M -> 5M -> 10M (Batch F). */
+                    scanSizeKnobTicks += delta;
+                    if (Math.abs(scanSizeKnobTicks) < ENUM_KNOB_TICKS) return;
+                    const dir = scanSizeKnobTicks > 0 ? 1 : -1;
+                    scanSizeKnobTicks = 0;
+                    const at = Math.max(0, SIZE_CAP_CHOICES.indexOf(scanPrefs.max_sample_size));
+                    const nextCap = SIZE_CAP_CHOICES[(at + dir + SIZE_CAP_CHOICES.length) % SIZE_CAP_CHOICES.length];
+                    if (nextCap !== scanPrefs.max_sample_size) {
+                        scanPrefs.max_sample_size = nextCap;
+                        saveScanPrefs(scanPrefs);
+                        sysScroll = 0;   // bring the Max-size row into view
+                        footer = `Max sample: ${scanSizeLabel()} — Rescan to apply`;
+                        needsRedraw = true;
+                    }
+                    return;
+                }
+
                 /* RANDOM page: Source enum — cycles User -> Core -> Both (§13.2).
                  * Same tick accumulation as Duplicates. */
                 if (PAGES[pageIndex] !== 'RANDOM') return;
-                const delta = decodeDelta(d2);
-                if (delta === 0) return;
                 srcKnobTicks += delta;
                 if (Math.abs(srcKnobTicks) < ENUM_KNOB_TICKS) return;
                 const dir = srcKnobTicks > 0 ? 1 : -1;
@@ -1036,16 +1091,18 @@ function drawKitPage() {
      * Right edge: library reject/favourite totals + this sample's standing. */
     const p = kit.pads[selectedPad];
     const gain = (p.playback && p.playback.gain != null) ? p.playback.gain : 1;
+    const pool = padPool(p.pad, config);
     line(MX, 14, `Pad ${p.pad}`);
     line(MX + 88, 14, `R${rejects.size} F${favourites.size}`);
-    line(MX, 24, `Role   ${p.role}`);
+    line(MX, 24, `Pool  ${pool.join('/')}`);
     line(MX, 34, `Lock ${p.locked ? 'yes' : 'no'}     Gain ${gainToDbLabel(gain)}`);
     if (p.sample) {
         const fp = p.sample.filesystem_path;
         if (favourites.has(fp))    line(MX + 92, 24, 'FAV');
         else if (rejects.has(fp))  line(MX + 92, 24, 'REJ');
         const cat = p.sample.category;
-        line(MX, 44, cat && cat !== p.role ? `Drawn from  ${cat}` : `Category    ${cat || p.role}`);
+        const inPool = cat && pool.indexOf(cat) !== -1;
+        line(MX, 44, cat && !inPool ? `Drawn from  ${cat}` : `Category    ${cat || pool[0]}`);
         const st = slotStat.charAt(selectedPad);
         const tag = st === 'm' ? '(missing) ' : st === 'x' ? '(bad file) ' : st === '.' ? '(loading) ' : '';
         line(MX, 54, tag + p.sample.filename);
@@ -1055,18 +1112,53 @@ function drawKitPage() {
     }
 }
 
-function drawSystemPage() {
-    /* No footer here either — the whole area is the index report. */
+/* SYSTEM page rows below the fixed header. Up/Down scroll a 4-line window.
+ * Rows 1 & 2 are the knob-1 / knob-2 controls (loop filter / size cap). */
+const SYS_VISIBLE = 4;
+let sysScroll = 0;
+
+function systemRows() {
     const s = indexSummary;
+    return [
+        `Indexed  ${s.indexed}`,
+        `Loop filter  ${scanPrefs.skip_loops ? 'skip' : 'keep'}`,   // knob 1
+        `Max size  ${scanSizeLabel()}`,                             // knob 2
+        `Cut  ${s.skippedLoops || 0} loop / ${s.skippedOversize || 0} big`,
+        `Kick  ${s.kick}`,
+        `Snare  ${s.snare}`,
+        `Clap  ${s.clap}`,
+        `Hats  ${s.hats}`,
+        `Toms  ${s.toms}`,
+        `Perc  ${s.perc}`,
+        `Cymbals  ${s.cym}`,
+        `FX  ${s.fx}`,
+        `Other  ${s.other}`
+    ];
+}
+
+function sysScrollClamp(rows) {
+    const max = Math.max(0, rows.length - SYS_VISIBLE);
+    if (sysScroll < 0) sysScroll = 0;
+    if (sysScroll > max) sysScroll = max;
+}
+
+function drawSystemPage() {
+    /* Fixed header (RESCAN / Age / Src) + a scrollable list — Up/Down move the
+     * 4-row window. Knob 1 = loop filter, knob 2 = size cap (persist, apply on
+     * the next Rescan). Category counts are the 8 Rev. 3 buckets + Other. */
     const scanning = !!scan;
-    const cx = 74;
-    button(MX, 13, 50, 12, scanning ? 'SCAN' : 'RESCAN', assignHeld && !scanning);
-    line(MX + 56, 13, `Age ${indexAgeText}`);
-    line(MX + 56, 22, `Src ${SOURCE_LABEL[sourceMode]}`);
-    line(MX, 30, `Indexed ${s.indexed}`);  line(cx, 30, `Oth ${s.other}`);
-    line(MX, 39, `Kick ${s.kick}`);        line(cx, 39, `Snr ${s.snare}`);
-    line(MX, 48, `Clap ${s.clap}`);        line(cx, 48, `Hat ${s.hats}`);
-    line(MX, FULL_BOTTOM, `Perc ${s.perc}`); line(cx, FULL_BOTTOM, `FX ${s.fx}`);
+    button(MX, 13, 46, 12, scanning ? 'SCAN' : 'RESCAN', assignHeld && !scanning);
+    line(MX + 52, 13, `Age ${indexAgeText}`);
+    line(MX + 52, 21, `Src ${SOURCE_LABEL[sourceMode]}`);
+
+    const rows = systemRows();
+    sysScrollClamp(rows);
+    for (let i = 0; i < SYS_VISIBLE; i++) {
+        const r = rows[sysScroll + i];
+        if (r != null) line(MX, 30 + i * 8, r);
+    }
+    if (sysScroll > 0) line(RX - 6, 30, '^');
+    if (sysScroll < rows.length - SYS_VISIBLE) line(RX - 6, 30 + (SYS_VISIBLE - 1) * 8, 'v');
 }
 
 function drawExportPage() {
@@ -1135,6 +1227,9 @@ globalThis.init = function () {
     /* Batch D: which exporters a Save runs. */
     exportPrefs = loadExportPrefs();
     exportSel = 0;
+
+    /* Batch F: SYSTEM-page scan filters. */
+    scanPrefs = loadScanPrefs();
 
     /* Restore the last working kit if there is one (Sam's request — reverses
      * the §3.1 "always blank" default; New gives a fresh slate). Missing

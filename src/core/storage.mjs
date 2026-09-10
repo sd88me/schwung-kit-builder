@@ -9,6 +9,7 @@
 import * as os from 'os';
 import { KB_DIR, CONFIG_PATH } from './sample_index.mjs';
 import { validateKit } from './validation.mjs';
+import { stripWavString, isWavName } from './wav_strip.mjs';
 import { exportKit as buildAndWriteExport } from '../exporters/mrdrums_json.mjs';
 import { exportXpm as buildAndWriteXpm, MPC_EXPORT_ROOT } from '../exporters/mpc_xpm.mjs';
 
@@ -41,12 +42,53 @@ export function saveExportPrefs(prefs) {
     return writeJsonAtomic(CONFIG_PATH, cfg);
 }
 
+/* Scan-time filters (Batch F). Persisted in config.json under `scan_filters`
+ * — the same key `loadConfig()` merges, so a Rescan picks the override up.
+ * `skip_loops` default on; `max_sample_size` a human string ("2mb") or null. */
+const SCAN_FILTER_DEFAULTS = { skip_loops: true, max_sample_size: null };
+
+export function loadScanPrefs() {
+    const sf = readRawConfig().scan_filters || {};
+    return {
+        skip_loops: typeof sf.skip_loops === 'boolean' ? sf.skip_loops : SCAN_FILTER_DEFAULTS.skip_loops,
+        max_sample_size: (sf.max_sample_size === null || typeof sf.max_sample_size === 'string' || typeof sf.max_sample_size === 'number')
+            ? sf.max_sample_size : SCAN_FILTER_DEFAULTS.max_sample_size
+    };
+}
+
+export function saveScanPrefs(prefs) {
+    const cfg = readRawConfig();
+    cfg.scan_filters = Object.assign({}, SCAN_FILTER_DEFAULTS, cfg.scan_filters, prefs || {});
+    hMkdir(KB_DIR);
+    return writeJsonAtomic(CONFIG_PATH, cfg);
+}
+
 /* ---- host shims (undefined under node) --------------------------------- */
 
 function hRead(p)   { return (typeof host_read_file === 'function') ? host_read_file(p) : null; }
 function hWrite(p, s){ return (typeof host_write_file === 'function') ? !!host_write_file(p, s) : false; }
 function hExists(p) { return (typeof host_file_exists === 'function') ? !!host_file_exists(p) : false; }
 function hMkdir(p)  { if (typeof host_ensure_dir === 'function') host_ensure_dir(p); }
+
+/* Byte-copy src -> dest. Prefers a real host primitive; the shell path is a
+ * fallback (allowlisted, shadow_ui only) and the string round-trip a last
+ * resort — fine for text and the node test fs, best-effort for binary audio
+ * (see docs/POST_MVP.md: a DSP byte-copy path is the eventual fix). On the
+ * round-trip branch a .wav is run through stripWavString() first — drops
+ * LIST/bext/iXML/… so the copy beside the .xpm is leaner (no-op if the host
+ * mangled the bytes on read). */
+function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+function hCopy(src, dest) {
+    if (typeof host_copy_file === 'function') return !!host_copy_file(src, dest);
+    if (typeof host_system_cmd === 'function') {
+        host_system_cmd('cp -f -- ' + shq(src) + ' ' + shq(dest));
+        return hExists(dest);
+    }
+    let buf = hRead(src);
+    if (buf == null) return false;
+    if (isWavName(dest)) buf = stripWavString(buf);
+    return hWrite(dest, buf);
+}
 
 /* ---- kit name (spec §3.3.1) ------------------------------------------- */
 
@@ -93,11 +135,11 @@ export function commitKitNumber(used) {
 export function sanitizeFilename(name) {
     let s = String(name == null ? '' : name);
     s = s.replace(/[\u0000-\u001f\u007f]/g, '');   // control characters
-    s = s.replace(/\.{2,}/g, '.');                    // path-traversal runs
-    s = s.replace(/[\/\\]/g, '');                   // path separators
-    s = s.replace(/[<>:"|?*]/g, '_');                 // invalid filename chars
-    s = s.replace(/^[.\s]+|\s+$/g, '');              // trim leading dot/space, trailing space
-    if (!s) s = 'Kit Builder';                        // fallback
+    s = s.replace(/[\/\\]/g, '');                   // path separators — first, so
+    s = s.replace(/\.{2,}/g, '.');                  // then "../.." collapses to one dot
+    s = s.replace(/[<>:"|?*]/g, '_');               // invalid filename chars
+    s = s.replace(/^\s+|\s+$/g, '');                // trim surrounding whitespace only
+    if (!s || /^\.+$/.test(s)) s = 'Kit Builder';   // empty or dots-only -> fallback
     return s;
 }
 
@@ -235,16 +277,17 @@ export function exportMrDrums(kit, name) {
     });
 }
 
-/* MPC .xpm export (Batch D3). Writes <Root>/<Kit>/<Kit>.xpm + MANIFEST.txt.
- * The MPC needs the WAVs beside the .xpm, named <SampleName>.wav — module JS
- * can't copy audio, so MANIFEST.txt lists what to gather. */
+/* MPC .xpm export (Batch D3). Writes <Root>/<Kit>/<Kit>.xpm + MANIFEST.txt and
+ * gathers each sample beside the .xpm (hCopy). Any copy that fails is tagged
+ * [MISSING] in MANIFEST.txt for a manual step. */
 export function exportMpcXpm(kit, name) {
     hMkdir(MPC_EXPORT_ROOT);
     return buildAndWriteXpm(kit, {
         dir: MPC_EXPORT_ROOT,
         name: name || kit.name || 'Kit Builder',
         mkdir: (p) => hMkdir(p),
-        write: (p, s) => hWrite(p, s)
+        write: (p, s) => hWrite(p, s),
+        copy: (src, dest) => hCopy(src, dest)
     });
 }
 

@@ -75,24 +75,28 @@ Template-substitution off a real MPC-V 2.1 drum program (Sam supplied
 program byte-for-byte, sets `<ProgramName>` + per-pad Layer-1 `<SampleName>`,
 regenerates `<PadNoteMap>` ((35+pad) mod 128) / `<PadGroupMap>`. Output diffs
 clean against the reference. Writes `KitBuilder/Exports/MPC/<Kit>/<Kit>.xpm` +
-`MANIFEST.txt`; user (or a later copy step) gathers the WAVs as
-`<SampleName>.wav` beside it. `<SliceEnd>`=0 for now.
+`MANIFEST.txt` and now **gathers** each sample into that folder as
+`<SampleName><ext>` (`storage.hCopy` → `host_copy_file`, else an allowlisted
+`cp`, else a string round-trip). Any copy that fails is tagged `[MISSING]` in
+`MANIFEST.txt` for a manual step. `<SliceEnd>`=0 for now.
 
-### D2. `.ablpresetbundle` export  ·  medium  ·  *deferred — needs a reference bundle + binary I/O*
-Zip containing the `.ablpreset` + a `Samples/` folder of copied WAVs, so a kit
-is portable without the source library. Module JS can't do binary file I/O
-safely (`host_read_file` → string), so the **DSP loader thread** does it:
-`set_param("export_bundle", "<destpath>")` → read each slot's raw file, emit a
-**store-only** (no-deflate) zip. Watch total size (16 samples can be tens of MB).
-Blocked on a real Move-exported `.ablpresetbundle` to match the archive layout.
+### D2. `.ablpresetbundle` export  ·  **dropped** (2026-09-10)
+`.ablpresetbundle` is an *inbound* format — built off-device, pushed to Move
+via Move Manager or opened in Note. Kit Builder runs on Move and already
+lands its kit in Move's Track Presets (the MrDrums `.ablpreset`, samples
+referenced in place), so there is no import step for a bundle to serve. A kit
+leaving Move *with* its samples is Move's own drum-rack save (`.ablbundle`),
+which Move does natively. Reimplementing a sample-zipping exporter here is
+redundant and was hard-blocked on binary I/O from module JS anyway. Removed
+from scope; the reference material was doc-only (never coded).
 
 ### D3. Akai MPC `.xpm` export  ·  **done** (see above)
-Also still to do: actually copy the WAVs beside the `.xpm` (same DSP byte-copy
-path D2 needs) so it's a one-step transfer, not "gather per MANIFEST.txt".
+Sample gathering now happens on export (`exportXpm`'s injected `copy`). The
+on-device copy is best-effort for binary until a real `host_copy_file` lands;
+`MANIFEST.txt` remains the fallback of record.
 
 **Test D:** EXPORT toggles persist ✓; `.xpm` diffs clean vs the reference ✓;
-still to verify — `.xpm` loads + plays on Sam's MPC; a bundle unzips to a
-working `.ablpreset` + samples.
+still to verify — `.xpm` loads + plays on Sam's MPC.
 
 ---
 
@@ -123,6 +127,80 @@ Open questions to settle first (from §28.4):
 **Test E:** kit level is even after match; sequencer runs in time with Move's
 transport, only while the tool is open, and the step row toggles cleanly
 between modes.
+
+---
+
+## Batch F — adopted from drum-kit-generator  ·  **done**
+*(github.com/klingklangmatze/drum-kit-generator; all pure-JS + tested.)*
+
+### F1. Skip loops and oversized files during the scan  ·  **done**
+`src/core/scan_filters.mjs`: `makeScanFilter(cfg).reject(name, size)` returns
+`'loop'` (name has `loop`, a `[<n>` bpm tag, or `<n> bpm`), `'oversize'`
+(over the cap), or `null`. `createScan` applies it after the extension check
+and tallies `skipped_loops` / `skipped_oversize` into the index payload.
+**Selectable on SYSTEM:** knob 1 toggles the loop filter, knob 2 cycles the
+size cap (Off / 1M / 2M / 5M / 10M); both persist to `config.json`
+`scan_filters` (`loadScanPrefs` / `saveScanPrefs`) and apply on the next
+Rescan. Default: skip loops on, no size cap. SYSTEM page shows both toggles
+and a `Cut nL nB` line. Narrow opt-out heuristic — not the general "filename
+tag filters" idea still parked in Not planned.
+
+### F2. Enrich the classifier alias table  ·  **done** (extended by Batch G)
+`role_rules.*.folder_aliases` in `sample_index.DEFAULT_CONFIG` + both
+`kit_config.json` copies expanded with the generator's vocabulary, normalised
+singular+plural (matching is exact, no stemming). Batch F did this against the
+original 7 roles; Batch G then took it to the full 22-category set (rim / tom /
+conga / crash / ride / cymbal / hat split out, melodic vox/bass/synth/stab/
+chord/lead/pad added). Still folder-component matching (spec §7.2) — filenames
+untouched.
+
+### F3. WAV metadata stripping  ·  **done**
+`src/core/wav_strip.mjs`: `stripWav(bytes)` keeps only `fmt `/`fact`/`data`,
+drops LIST/bext/iXML/ID3/PEAK/JUNK/…; anything not a clean little-endian
+RIFF/WAVE is returned untouched. Wired into `storage.hCopy`'s JS round-trip
+branch (`stripWavString`) so the MPC `.xpm` gather places lean WAVs beside the
+`.xpm` (smaller, fewer MPC import quirks). `stripWav` (the byte-array form) is
+kept for any future exporter that copies audio.
+
+### F4. Full 42-param drumCell  ·  **done**
+`mrdrums_json.drumCell()` now writes the complete parameter block
+(`DRUM_CELL_DEFAULTS`) verbatim from a real Move drum-rack export; Kit
+Builder still only drives `Volume` (pad gain) and `Pan`. MrDrums ignores the
+extra keys; Move's own Track-Preset loader may want the full set.
+
+**Test F:** `test_scan_filters` (loop/size/enum), `test_wav_strip`
+(chunk-keep/passthrough/odd-pad/string bridge), `test_classifier` (new
+aliases + deepest-match), `test_mrdrums_export` (42-param block, gain still
+moves only Volume), `test_storage` (scan-pref persist/merge). ✓
+
+---
+
+## Batch G — Rev. 3 category / pad model  ·  **done**
+*(Spec bumped to Revision 3 — see its revision history. Adopts the
+drum-kit-generator's category vocabulary and pad layout.)*
+
+- **22 categories** (`rim tom conga crash ride cymbal hat` + melodic `vox
+  bass synth stab chord lead pad` added). Folder aliases only; a category no
+  longer implies a pad. `sample_classifier` mechanism unchanged.
+- **`config.pad_layout`** — 16 category lists; each pad draws the **union**,
+  uniform pick. `role_rules[*].pads` / `fallback_roles` removed. No fallback
+  chain — empty union → unresolved pad.
+- **`["other"]` sentinel** → unslotted categories + `fx` (fx on pad 12 *and*
+  the catch-all pads 13–16). `random_assign.otherPoolCats` / `poolCatsForPad`.
+- **`pad.role`** = pool's first category (display/compat); old kits load
+  unchanged. `roleForPad`/`makePad` now take the full `config`.
+- **SYSTEM page** → 8 grouped buckets + Other (`SYSTEM_BUCKETS`, `summarize`).
+  KIT page shows the pad's `Pool` and, for a sample outside it, `Drawn from`.
+- Touched: `kit_model` (`DEFAULT_PAD_LAYOUT`, `padPool`), `sample_index`
+  (`DEFAULT_CONFIG`, `ROLE_ORDER`, `SYSTEM_BUCKETS`, `mergeConfig`,
+  `summarize`), `random_assign` (union `resolveOne`), `validation.ROLES`,
+  both `kit_config.json`, `ui.js`, spec §6.4/§7.1/§7.3/§7.4/§10.2/§13.4.
+
+**Test G:** `test_assignment` rewritten for union pools (each pad stays in
+its pool, pools actually mix over seeds, fx on pad 12 + Other pads, no
+fallback → unresolved, relaxation on a starved Other pool);
+`test_classifier` Rev. 3 vocab (rim/tom/conga/crash/ride/cymbal, generic
+`hat` vs closed/open + plurals, melodic categories, shaker→hat tie). ✓
 
 ---
 

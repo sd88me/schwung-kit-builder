@@ -1,6 +1,6 @@
 # Kit Builder MVP Technical Specification
 
-**Document status:** Draft for implementation (Revision 2)
+**Document status:** Draft for implementation (Revision 3)
 **Target platform:** Ableton Move running Schwung
 **Module type:** Standalone Overtake-style Tool
 **Working name:** Kit Builder *(renamed from "Kit Forge" in Revision 2)*
@@ -19,6 +19,19 @@
 7. Generated kit name format defined explicitly: counter + date. See §3.3.1.
 8. Assign (and other momentary actions) now explicitly ignore reactivation while a previous invocation is still in flight, rather than queuing or restarting it. See §10.7, §13.5.
 
+**Revision 3 — 2026-09-10.** Category / pad model reworked, adopting the vocabulary and pad layout of github.com/klingklangmatze/drum-kit-generator:
+
+1. **Classification vocabulary expanded** from 8 to 22 categories: `kick snare rim clap hat closed_hat open_hat tom conga percussion crash ride cymbal fx vox bass synth stab chord lead pad other`. Folder aliases only — a category no longer implies a pad. See §7.1, §7.2.
+2. **Pad placement moved to `config.pad_layout`** — an array of 16 category lists. Each pad draws from the **union** of its list, picked uniformly. `role_rules[*].pads` and `role_rules[*].fallback_roles` are removed; there is no fallback chain — an empty pool leaves the pad empty (§10.3 unchanged). See §7.4, §10.2.
+3. **The `["other"]` layout sentinel** expands to every category with no dedicated pad slot (the melodic set `vox bass synth stab chord lead pad` plus `other`), **plus `fx`** — so `fx` sits on pad 12 *and* can land on the catch-all pads 13–16. See §7.4.
+4. **`pad.role`** is retained for display/compat and holds the pad's *primary* category (first in its pool). Older kits load unchanged.
+5. **SYSTEM page** shows 8 grouped buckets (Kick / Snr / Clap / Hats / Tom / Perc / Cym / FX) plus a combined Other, in a scrollable list. See §13.4.
+
+**Rev. 3.x — 2026-09-10.** Follow-ups from device testing:
+
+6. **Filename fallback for classification** — `classify_filenames` (default on): a token-exact keyword match on the file's own name when the folder path classifies it as `other`. Folder still wins. See §7.2.
+7. **MPC `.xpm` sample names** are the source file's own basename (was `<kit>-<NN>-<name>`). See §16 / `mpc_xpm.mjs`.
+
 ---
 
 ## 1. Purpose
@@ -35,7 +48,7 @@ The MVP will:
 - Save Kit Builder project files.
 - Export kits in a MrDrums-compatible JSON format.
 
-Move `.ablpreset`, `.ablpresetbundle` and Akai MPC export are explicitly deferred until the core workflow is proven.
+Move `.ablpreset` and Akai MPC export are explicitly deferred until the core workflow is proven. *(Rev. 3: a `.ablpresetbundle` exporter was considered and dropped — it is an inbound/import format; a kit leaving Move with samples is Move's native `.ablbundle` drum-rack save.)*
 
 ## 2. Product boundaries
 
@@ -63,7 +76,6 @@ Move `.ablpreset`, `.ablpresetbundle` and Akai MPC export are explicitly deferre
 The following are outside the first release, but planned for future releases:
 
 - Direct `.ablpreset` generation.
-- `.ablpresetbundle` export.
 - Core Library sample scanning.
 - Akai MPC `.xpm` export.
 - Audio analysis or machine-learning classification.
@@ -278,34 +290,24 @@ An empty pad uses `null` for its sample.
 
 ### 6.4 MIDI note mapping
 
-The default mapping is sequential:
+The default mapping is sequential: pad *n* → MIDI note 35 + *n* (pad 1 → 36 …
+pad 16 → 51). It must be configurable if MrDrums uses a different pad-to-note
+contract.
 
-| Pad | MIDI note | Default role |
-|-----|-----------|--------------|
-| 1   | 36        | Kick |
-| 2   | 37        | Snare |
-| 3   | 38        | Clap |
-| 4   | 39        | Open Hat |
-| 5   | 40        | Closed Hat |
-| 6   | 41        | Percussion |
-| 7   | 42        | FX |
-| 8   | 43        | Other |
-| 9   | 44        | Other |
-| 10  | 45        | Other |
-| 11  | 46        | Other |
-| 12  | 47        | Other |
-| 13  | 48        | Other |
-| 14  | 49        | Other |
-| 15  | 50        | Other |
-| 16  | 51        | Other |
-
-The mapping must be configurable if MrDrums uses a different pad-to-note contract.
+Each pad's default draw pool (`pad.role` = the pool's first category) is in
+§7.4. In brief: 1 kick · 2 rim/snare · 3 snare · 4 clap/perc · 5 perc/tom/conga
+· 6 hat · 7 closed_hat · 8 open_hat · 9 ride/cymbal/crash · 10 tom/perc/conga
+· 11 perc · 12 fx · 13–16 Other.
 
 ## 7. Configuration model
 
 Folder names must not be permanently hard-coded into the assignment engine.
 
 ### 7.1 Default configuration
+
+*(Rev. 3 — `role_rules` entries now carry `folder_aliases` only; pad placement
+is `pad_layout`, §7.4. `scan_filters` is Batch F. Abbreviated here — the
+authoritative copy is `config/default_kit_config.json`.)*
 
 ```json
 {
@@ -315,49 +317,37 @@ Folder names must not be permanently hard-coded into the assignment engine.
     "core": "/data/CoreLibrary/Samples"
   },
   "supported_extensions": [".wav", ".aif", ".aiff"],
+  "scan_filters": { "skip_loops": true, "max_sample_size": null },
   "role_rules": {
-    "kick": {
-      "pads": [1],
-      "folder_aliases": ["kick", "kicks", "bd", "bass drum"],
-      "fallback_roles": []
-    },
-    "snare": {
-      "pads": [2],
-      "folder_aliases": ["snare", "snares", "sd"],
-      "fallback_roles": []
-    },
-    "clap": {
-      "pads": [3],
-      "folder_aliases": ["clap", "claps"],
-      "fallback_roles": ["snare"]
-    },
-    "open_hat": {
-      "pads": [4],
-      "folder_aliases": ["open hat", "open hats", "open_hat", "open-hat", "openhihat", "oh"],
-      "fallback_roles": ["percussion"]
-    },
-    "closed_hat": {
-      "pads": [5],
-      "folder_aliases": ["closed hat", "closed hats", "closed_hat", "closed-hat", "closedhihat", "ch"],
-      "fallback_roles": ["percussion"]
-    },
-    "percussion": {
-      "pads": [6],
-      "folder_aliases": ["percussion", "perc"],
-      "fallback_roles": ["other"]
-    },
-    "fx": {
-      "pads": [7],
-      "folder_aliases": ["fx", "sfx", "effects"],
-      "fallback_roles": ["percussion", "other"]
-    },
-    "other": {
-      "pads": [8, 9, 10, 11, 12, 13, 14, 15, 16],
-      "folder_aliases": ["other"],
-      "exclude_recognised_role_folders": true,
-      "fallback_roles": []
-    }
-  }
+    "kick":       { "folder_aliases": ["kick", "kicks", "kck", "bd", "bass drum"] },
+    "snare":      { "folder_aliases": ["snare", "snares", "snr", "sd"] },
+    "rim":        { "folder_aliases": ["rim", "rimshot", "side stick"] },
+    "clap":       { "folder_aliases": ["clap", "claps", "clp", "cp", "hand clap"] },
+    "hat":        { "folder_aliases": ["hat", "hats", "hihat", "hh", "shaker"] },
+    "closed_hat": { "folder_aliases": ["closed hat", "closed hihat", "ch", "chh"] },
+    "open_hat":   { "folder_aliases": ["open hat", "open hihat", "oh", "ohh"] },
+    "tom":        { "folder_aliases": ["tom", "toms", "floor", "rack"] },
+    "conga":      { "folder_aliases": ["conga", "congas"] },
+    "percussion": { "folder_aliases": ["percussion", "perc", "tambourine", "cowbell", "bongo", "shaker", "..."] },
+    "crash":      { "folder_aliases": ["crash", "crashes"] },
+    "ride":       { "folder_aliases": ["ride", "rides"] },
+    "cymbal":     { "folder_aliases": ["cymbal", "cymbals", "cym"] },
+    "fx":         { "folder_aliases": ["fx", "sfx", "noise", "impact", "riser", "sweep", "hit", "..."] },
+    "vox":        { "folder_aliases": ["vox", "vocal", "voice", "chant", "choir"] },
+    "bass":       { "folder_aliases": ["bass", "sub"] },
+    "synth":      { "folder_aliases": ["synth", "synthesizer", "analog"] },
+    "stab":       { "folder_aliases": ["stab", "chord hit"] },
+    "chord":      { "folder_aliases": ["chord", "chords"] },
+    "lead":       { "folder_aliases": ["lead", "melody", "melodic"] },
+    "pad":        { "folder_aliases": ["pad", "atmosphere", "ambient", "texture", "strings", "keys", "piano", "..."] },
+    "other":      { "folder_aliases": ["other"], "exclude_recognised_role_folders": true }
+  },
+  "pad_layout": [
+    ["kick"], ["rim", "snare"], ["snare"], ["clap", "percussion"],
+    ["percussion", "tom", "conga"], ["hat"], ["closed_hat"], ["open_hat"],
+    ["ride", "cymbal", "crash"], ["tom", "percussion", "conga"], ["percussion"], ["fx"],
+    ["other"], ["other"], ["other"], ["other"]
+  ]
 }
 ```
 
@@ -382,13 +372,47 @@ For example, each of these should classify as `open_hat`:
 /OPEN_HIHAT/hihat.wav
 ```
 
+**Filename fallback** *(Rev. 3.x — config `classify_filenames`, default on)*: when
+the folder path yields no category, the file's own name is tokenised
+(separators, camelCase and letter/digit boundaries → lowercase tokens) and
+matched against the same alias index — contiguous joins of up to 3 tokens,
+longest window first, first hit wins. Token-exact (no substrings, so
+`bassline.wav` is **not** `bass`). Folder structure always wins over the
+filename. `classifyFilename()` in `sample_classifier.mjs`.
+
 ### 7.3 Other category
 
-The default Other candidate pool is:
+The Other candidate pool (the `["other"]` `pad_layout` sentinel) is:
 
-> All supported samples under the selected source root, minus samples classified as: kick, snare, clap, open_hat, closed_hat, percussion, fx.
+> Every classification category that no pad's `pad_layout` entry names — the melodic set `vox bass synth stab chord lead pad` and `other` itself — **plus `fx`** (Rev. 3 decision 3: `fx` has its own pad 12 but also feeds the catch-all pads).
 
-A sample must not be placed in the Other pool merely because it is stored in a nested subfolder beneath a recognised category.
+A sample must not be placed in a category's pool merely because it is stored in a nested subfolder beneath a recognised category folder (deepest-match rule, §7.2).
+
+### 7.4 Pad layout (Rev. 3)
+
+`config.pad_layout` is an array of 16 entries; entry *i* is the list of
+classification categories pad *i*+1 draws from. Assignment pools the **union**
+of those categories and picks uniformly (no weighting between categories, no
+ordering preference). There is no fallback chain: if the union is empty the
+pad is left unresolved (§10.3).
+
+| Pad | Pool |
+|-----|------|
+| 1 | kick |
+| 2 | rim, snare |
+| 3 | snare |
+| 4 | clap, percussion |
+| 5 | percussion, tom, conga |
+| 6 | hat |
+| 7 | closed_hat |
+| 8 | open_hat |
+| 9 | ride, cymbal, crash |
+| 10 | tom, percussion, conga |
+| 11 | percussion |
+| 12 | fx |
+| 13–16 | Other (§7.3) |
+
+`pad.role` in the kit model holds the pool's first category, for display only.
 
 ## 8. Sample index
 
@@ -482,11 +506,11 @@ The path mapper must:
 
 1. Copy the current kit into a proposed working state.
 2. Determine which pads are unlocked.
-3. Process unlocked pads **in ascending pad-number order (1→16)** *(made explicit in Rev. 2 — decision 4)*. For each: build its candidate pool.
+3. Process unlocked pads **in ascending pad-number order (1→16)** *(made explicit in Rev. 2 — decision 4)*. For each: build its candidate pool as the **union** of every category in that pad's `pad_layout` entry (§7.4), expanding the `["other"]` sentinel per §7.3.
 4. Remove missing or invalid sample records from the pool.
 5. Remove the pad's current sample from the pool where another candidate exists.
 6. Remove samples already assigned elsewhere in this pass when duplicate prevention is enabled.
-7. Apply fallback-role pools if the primary pool is empty.
+7. *(Rev. 3 — no fallback chain. If the union pool is empty the pad is unresolved, §10.3.)*
 8. Select one candidate using the seeded random generator.
 9. Assign the candidate to the proposed pad.
 10. Continue until all unlocked pads have been processed.
@@ -512,7 +536,7 @@ Duplicate prevention is enabled by default. When enabled:
 - The same sample cannot be assigned to more than one pad during the assignment pass.
 - Samples on locked pads are considered already used.
 - Existing samples on unlocked pads may be replaced.
-- If the available pool is too small, duplicate prevention may be relaxed for that role after all unique candidates are exhausted.
+- If a pad's union pool is too small, duplicate prevention may be relaxed for that pad after all unique candidates are exhausted.
 - Any relaxation must be reported to the user.
 
 ### 10.5 Avoid immediate reselection
@@ -525,7 +549,7 @@ The random assignment engine should support a stored integer seed. The same samp
 
 The seed may be generated automatically for each Assign press in the MVP. It must still be stored within the kit for diagnostics and future repeatability.
 
-> **Note (Rev. 2 — decision 4):** Because pads are always resolved in ascending order, a shared-pool role like Other (pads 8–16) resolves pad 8 first, giving it first pick of duplicate-avoided candidates — later pads in the same role are more likely to hit the duplicate-relaxation fallback in §10.4. This is an accepted MVP simplification. Revisiting pool fairness (e.g. randomising which pad in a shared-pool role gets resolved first) is expected once pad rules are developed further with real libraries in use.
+> **Note (Rev. 2 — decision 4):** Because pads are always resolved in ascending order, pads sharing a pool (e.g. the four Other pads 13–16, or percussion on pads 4/5/10/11) resolve the lowest-numbered first, giving it first pick of duplicate-avoided candidates — later pads sharing that pool are more likely to hit the duplicate relaxation in §10.4. This is an accepted simplification. Revisiting pool fairness (e.g. randomising resolution order among pads that share a pool) is expected once pad rules are developed further with real libraries in use.
 
 ### 10.7 Reentrancy *(new in Rev. 2 — decision 8)*
 
@@ -628,16 +652,18 @@ Reserved controls may be omitted if Schwung does not support cleanly displaying 
 
 ### 13.4 System page
 
-| Encoder | Control | Behaviour |
-|---|---|---|
-| 1 | Indexed | Number of indexed samples |
-| 2 | Kicks | Number of kick candidates |
-| 3 | Snares | Number of snare candidates |
-| 4 | Hats | Combined hat count |
-| 5 | Other | Number of Other candidates |
-| 6 | Index Age | Time or date of last scan |
-| 7 | Config | Display configuration state |
-| 8 | Rebuild | Force index rebuild |
+Read-only index report plus two live controls (Batch F):
+
+- **Knob 1** — loop filter (skip / keep); **Knob 2** — max sample size
+  (Off / 1M / 2M / 5M / 10M). Both persist to `config.json` `scan_filters`
+  and take effect on the next Rescan.
+- **Jog-press** — Rescan (chunked recursive scan; §10.7 reentrancy applies).
+
+Displayed: `Idx` (total indexed) · `Cut nL nB` (loop / oversize skipped) ·
+`Loop` / `Max` (current filter state) · `Age` (last scan) · `Src` (source
+mode) · and the **8 category buckets** — Kick, Snr (snare+rim), Clap, Hats
+(hat+closed_hat+open_hat), Tom (tom+conga), Perc, Cym (crash+ride+cymbal), FX
+— plus **Other** (the melodic categories + unclassified).
 
 ### 13.5 Button implementation
 
@@ -997,7 +1023,7 @@ The MVP architecture should reserve a common exporter interface: `exportKit(kit,
 
 Each exporter should: validate the internal kit; check destination-specific requirements; convert internal paths and parameters; write atomically; validate the written output; return success, warnings, errors and destination paths.
 
-Planned exporters: `mrdrums_json`, `ableton_ablpreset`, `ableton_ablpresetbundle`, `akai_mpc_xpm`.
+Planned exporters: `mrdrums_json`, `ableton_ablpreset`, `akai_mpc_xpm`. *(An `ableton_ablpresetbundle` exporter was dropped in Rev. 3 — inbound/import format, see §1 / §2.2.)*
 
 No Ableton-specific or MPC-specific fields should be added to the core pad model unless they represent genuine reusable pad properties.
 

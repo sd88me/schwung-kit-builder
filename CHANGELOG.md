@@ -62,7 +62,7 @@ Post-MVP work — see [`docs/POST_MVP.md`](docs/POST_MVP.md) for the batch plan.
 - Tests: `test_storage.js` +2 (prefs round-trip as Sets; malformed file
   loads empty), `test_assignment.js` +1 (re-roll never lands on a reject).
 
-### Batch D — export system (D1 + D3)
+### Batch D — export system
 
 - **EXPORT page** (4th page). Rows toggle each exporter on/off — MrDrums
   `.ablpreset` (on by default), **MPC `.xpm`** (off by default) — plus an
@@ -74,15 +74,84 @@ Post-MVP work — see [`docs/POST_MVP.md`](docs/POST_MVP.md) for the batch plan.
   structural template; the export keeps it byte-for-byte and changes only
   `<ProgramName>`, each used pad's Layer-1 `<SampleName>`, and regenerates
   `<PadNoteMap>` (Note = (35 + pad) mod 128) / `<PadGroupMap>`. Output is
-  structurally identical to the reference file (verified by diff). Writes
-  `KitBuilder/Exports/MPC/<Kit>/<Kit>.xpm` + a `MANIFEST.txt` listing the
-  source WAV for each pad — the MPC needs the audio beside the `.xpm` named
-  `<SampleName>.wav`, and module JS can't copy audio. `<SliceEnd>` is left 0
-  (whole-sample one-shot); revisit if an MPC truncates playback.
-- Deferred: `.ablpresetbundle` (D2) — needs a reference bundle + binary zip
-  from the DSP loader thread.
-- Tests: new `test_mpc_xpm.js` (9 — template preserved, 128 instruments,
-  per-pad names, PadNoteMap wrap, CRLF, dedup, folder + manifest).
+  structurally identical to the reference file (verified by diff).
+- **Sample gather.** `exportXpm` takes an optional `copy(src, dest)`; when
+  supplied it copies each assigned sample into the `.xpm`'s folder as
+  `<SampleName><ext>` and reports a `gathered` count. `MANIFEST.txt` is
+  always written as the fallback, with rows tagged `[gathered]` / `[MISSING]`.
+  `storage.hCopy` prefers a real host copy primitive, then an allowlisted
+  `cp`, then a `host_read_file`/`host_write_file` round-trip (WAVs run through
+  `wav_strip` first — see Batch F).
+- **`<SampleName>` = the source file's own basename** (extension dropped,
+  spaces/parens kept, other unsafe punctuation → `_`, capped at 42). Was
+  `<kit>-<NN>-<name>`; duplicate names across pads still disambiguated.
+- **`.ablpresetbundle` (D2) dropped.** It is an inbound/import format (built
+  off-device, uploaded to Move via Move Manager or opened in Note); a kit
+  leaving Move with its samples is Move's native `.ablbundle` drum-rack save.
+- Tests: `test_mpc_xpm.js` (14 — template preserved, 128 instruments, per-pad
+  names, PadNoteMap wrap, CRLF, dedup, manifest, gather + `[MISSING]` tag).
+
+### Batch F — adopted from drum-kit-generator
+
+_(github.com/klingklangmatze/drum-kit-generator — pure-JS, tested.)_
+
+- **Scan-time loop + size filters** (`core/scan_filters.mjs`). Drop a file
+  from the index when its name looks like a loop (`loop`, `[120bpm]`,
+  `128 bpm`) or it exceeds a byte cap. **SYSTEM knob 1** toggles the loop
+  filter, **knob 2** cycles the size cap (Off / 1M / 2M / 5M / 10M); both
+  persist in `config.json → scan_filters` and take effect on the next
+  Rescan. Skipped counts show on the SYSTEM page. Default: loop-skip on, no
+  size cap.
+- **WAV metadata stripping** (`core/wav_strip.mjs`). `stripWav()` keeps only
+  the `fmt `/`fact`/`data` chunks, dropping LIST/bext/iXML/ID3/JUNK/…;
+  anything that isn't a clean little-endian RIFF/WAVE passes through
+  untouched. Wired into `storage.hCopy` so the MPC gather writes lean WAVs.
+- **Full 42-param `drumCell`** in the MrDrums export, verbatim from a real
+  Move drum-rack export, so the preset also satisfies Move's own Track-Preset
+  loader. Kit Builder still only drives `Volume` (pad gain) and `Pan`.
+- **Enriched folder aliases** — the classifier alias table gained the
+  generator's vocabulary (later extended to the full Rev. 3 set).
+- Tests: `test_scan_filters.js`, `test_wav_strip.js`,
+  `test_mrdrums_export.js` +2.
+
+### Batch G — Revision 3 category / pad model
+
+Spec bumped to **Revision 3** (see its revision history).
+
+- **22 classification categories** (adds `rim tom conga crash ride cymbal
+  hat` + melodic `vox bass synth stab chord lead pad`). `role_rules` entries
+  carry `folder_aliases` only.
+- **`config.pad_layout`** — an array of 16 category lists. Each pad draws
+  from the **union** of its list, picked uniformly. `role_rules[*].pads` and
+  `fallback_roles` removed; **no fallback chain** — an empty pool leaves the
+  pad unresolved.
+- **`["other"]` layout sentinel** expands to every category with no dedicated
+  pad slot, **plus `fx`** — so `fx` sits on pad 12 *and* the catch-all pads
+  13–16.
+- **`pad.role`** is now the pool's first category (display / kit
+  back-compat); older kits load unchanged.
+- **Filename fallback for classification** (`classify_filenames`, default
+  on). When a folder path yields `other`, `classifyFilename()` does a
+  token-exact keyword match on the file's own name (contiguous joins of up to
+  3 tokens, longest first; no substrings, so `bassline` ≠ `bass`). Folder
+  still wins.
+- **SYSTEM page** is a fixed header + a 4-row scrollable list (Up/Down):
+  Indexed · Loop filter · Max size · Cut · the 8 category buckets · Other.
+- Touched: `kit_model` (`DEFAULT_PAD_LAYOUT`, `padPool`), `sample_index`
+  (`DEFAULT_CONFIG`, `ROLE_ORDER`, `SYSTEM_BUCKETS`, `summarize`),
+  `random_assign` (union `resolveOne`, `otherPoolCats`, `poolCatsForPad`),
+  `validation.ROLES`, both `kit_config.json`, `ui.js`, spec
+  §6.4/§7.1–§7.4/§10.2/§13.4.
+- Tests: `test_assignment.js` rewritten for union pools; `test_classifier.js`
+  Rev. 3 vocab + filename fallback.
+
+### Fixes
+
+- **`sanitizeFilename`** (§15.6) stripped path separators *after* collapsing
+  dot-runs and then removed every leading dot, so `../../etc/passwd` became
+  `etcpasswd`. Now: separators first, then collapse `..` to one dot, trim
+  surrounding whitespace only, fall back to `Kit Builder` for an empty or
+  dots-only result. Still can't traverse.
 
 ## [0.1.0] — unreleased
 

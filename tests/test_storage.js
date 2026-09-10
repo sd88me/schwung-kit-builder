@@ -206,4 +206,23 @@ export const tests = [
         eq(p.rejects.size, 0);
         eq(p.favourites.size, 0);
     }},
+
+    { name: 'scan prefs default, persist, and merge into config.json (Batch F)', fn() {
+        installFsMock();
+        const def = storage.loadScanPrefs();
+        eq(def.skip_loops, true);
+        eq(def.max_sample_size, null);
+
+        assert(storage.saveScanPrefs({ skip_loops: false, max_sample_size: '2mb' }));
+        const back = storage.loadScanPrefs();
+        eq(back.skip_loops, false);
+        eq(back.max_sample_size, '2mb');
+
+        // written under the same key loadConfig() merges, alongside other config
+        storage.commitKitNumber(4);
+        const raw = JSON.parse(globalThis.host_read_file(storage.CONFIG_PATH || '/data/UserData/UserLibrary/KitBuilder/config.json'));
+        eq(raw.scan_filters.skip_loops, false);
+        eq(raw.scan_filters.max_sample_size, '2mb');
+        assert(raw.next_kit_number === 5, 'other config keys are preserved');
+    }},
 ];

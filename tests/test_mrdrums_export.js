@@ -60,6 +60,31 @@ export const tests = [
         assert(typeof cell.parameters.Volume === 'number');
     }},
 
+    { name: 'drumCell carries the full 42-param block, Volume/Pan kit-driven', fn() {
+        const { doc } = buildMrDrumsPreset(kitWith([[0, 'Kick', 'k.wav']]));
+        const p = doc.chains[0].devices[0].chains[0].devices[0].parameters;
+        eq(Object.keys(p).length, 42);
+        // a few keys a stock Move import expects that the old 6-param block lacked
+        for (const k of ['Effect_Type', 'Effect_On', 'Voice_Envelope_Mode', 'Voice_Filter_Type',
+                         'Voice_ModulationSource', 'NotePitchBend', 'Voice_Gain']) {
+            assert(k in p, `missing ${k}`);
+        }
+        eq(p.Effect_Type, 'Stretch');
+        eq(p.Voice_Envelope_Mode, 'A-H-D');
+        // Volume follows pad gain (unity -> -12), Pan stays 0
+        eq(p.Volume, gainToDb(1.0));
+        eq(p.Pan, 0.0);
+    }},
+
+    { name: 'per-pad gain still moves only Volume in the full block', fn() {
+        const kit = kitWith([[0, 'Kick', 'k.wav']]);
+        kit.pads[0].playback.gain = 2.0;
+        const { doc } = buildMrDrumsPreset(kit);
+        const p = doc.chains[0].devices[0].chains[0].devices[0].parameters;
+        eq(p.Volume, gainToDb(2.0));
+        eq(p.Voice_Gain, 1);           // untouched default
+    }},
+
     { name: 'only assigned pads get a chain; receivingNote = 35 + pad', fn() {
         const { doc } = buildMrDrumsPreset(kitWith([[0, 'Kick', 'k.wav'], [5, 'Percussion', 'p.wav'], [15, 'Other', 'o.wav']]));
         const notes = doc.chains[0].devices[0].chains.map((c) => c.drumZoneSettings.receivingNote);
