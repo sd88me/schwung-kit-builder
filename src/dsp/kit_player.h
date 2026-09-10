@@ -19,6 +19,8 @@
  *   get_param "sounding"   -> decimal 16-bit mask of slots with an active voice
  *   get_param "slot_status"-> 16 chars, one per slot: - empty  o ok  m missing
  *                             x decode-error  . loading
+ *   get_param "loudness"   -> 16 space-separated RMS fractions (0..~1), one per
+ *                             slot; 0 = empty / not loaded (E1 loudness match)
  */
 #ifndef KIT_PLAYER_H
 #define KIT_PLAYER_H

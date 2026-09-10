@@ -70,6 +70,7 @@ typedef struct {
     /* published to the audio thread by an atomic pointer store */
     sample_t *cur;
     volatile int status;
+    volatile float loudness;   /* RMS of the decoded PCM, 0..~1 of full scale (E1) */
 } slot_t;
 
 typedef struct {
@@ -211,6 +212,19 @@ static sample_t *build_sample(const src_pcm_t *src, int *status) {
     out->channels = outch;
     *status = ST_OK;
     return out;
+}
+
+/* RMS of a decoded slot as a fraction of full scale (E1 loudness match). Runs
+ * on the loader thread only. Empty / silent -> 0. */
+static float measure_rms(const sample_t *s) {
+    if (!s || !s->data || s->frames <= 0) return 0.0f;
+    long n = (long)s->frames * s->channels;
+    double acc = 0.0;
+    for (long i = 0; i < n; i++) {
+        double v = (double)s->data[i];
+        acc += v * v;
+    }
+    return (float)(sqrt(acc / (double)n) / 32768.0);
 }
 
 static int valid_bits(int bits, int is_float) {
@@ -380,10 +394,12 @@ static void *loader_main(void *arg) {
             if (strcmp(want, s->loaded_path) == 0) continue;
 
             if (want[0] == 0) {
+                s->loudness = 0.0f;
                 publish_slot(k, i, NULL, ST_EMPTY);
             } else {
                 int st = ST_DECODE_ERR;
                 sample_t *smp = load_audio(want, &st);
+                s->loudness = (st == ST_OK) ? measure_rms(smp) : 0.0f;
                 publish_slot(k, i, smp, st);
             }
             memcpy(s->loaded_path, want, sizeof(s->loaded_path));
@@ -572,6 +588,17 @@ static int get_param(void *inst, const char *key, char *buf, int buf_len) {
             buf[n++] = c;
         }
         buf[n] = 0;
+        return n;
+    }
+
+    if (strcmp(key, "loudness") == 0) {
+        /* 16 space-separated RMS fractions (E1). 0 = empty / not yet loaded. */
+        int n = 0;
+        if (k) for (int i = 0; i < NSLOTS; i++) {
+            int w = snprintf(buf + n, buf_len - n, "%s%.4f", i ? " " : "", k->slots[i].loudness);
+            if (w < 0 || w >= buf_len - n) break;
+            n += w;
+        }
         return n;
     }
     return -1;

@@ -82,6 +82,7 @@ import {
 } from './core/sample_index.mjs';
 
 import { SIZE_CAP_CHOICES, SIZE_CAP_LABELS } from './core/scan_filters.mjs';
+import { parseLoudness, matchGains } from './core/loudness.mjs';
 
 import {
     createKit, toggleLock, clearUnlocked, unlockAll, clearPad, setPadGain, gainToDbLabel,
@@ -154,11 +155,12 @@ const EXPORT_ROWS = [
 /* RANDOM-page action list — Up/Down (or step buttons 1..N) select, jog-press
  * or a step double-press fires (spec §13.2). Each has a step-button LED colour. */
 const RANDOM_ACTIONS = [
-    { name: 'Assign',     color: Green },
-    { name: 'New',        color: Blue },
-    { name: 'Save',       color: LightAmber },
-    { name: 'Clear',      color: Red },
-    { name: 'Unlock All', color: White }
+    { name: 'Assign',       color: Green },
+    { name: 'New',          color: Blue },
+    { name: 'Save',         color: LightAmber },
+    { name: 'Clear',        color: Red },
+    { name: 'Unlock All',   color: White },
+    { name: 'Match Levels', color: DarkCyanTeal }
 ];
 const DOUBLE_PRESS_MS = 400;   // step-button double-press window
 const ARM_TICKS = 390;         // ~9 s confirm window for New
@@ -579,12 +581,32 @@ function persistWorkingKit() {
 
 function fireRandomAction() {
     switch (RANDOM_ACTIONS[randomSel].name) {
-        case 'Assign':     fireAssign(); break;
-        case 'New':        fireNew(); break;
-        case 'Save':       fireSave(); break;
-        case 'Clear':      fireClear(); break;
-        case 'Unlock All': fireUnlockAll(); break;
+        case 'Assign':       fireAssign(); break;
+        case 'New':          fireNew(); break;
+        case 'Save':         fireSave(); break;
+        case 'Clear':        fireClear(); break;
+        case 'Unlock All':   fireUnlockAll(); break;
+        case 'Match Levels': fireMatchLevels(); break;
     }
+}
+
+/* E1 — read each loaded slot's RMS from the DSP, set a per-pad makeup gain
+ * that pulls every assigned pad toward the median level, apply it to the kit
+ * model + DSP, and persist. A manual Knob-5 trim afterwards still overrides. */
+function fireMatchLevels() {
+    if (busy()) { footer = 'Busy — try again'; needsRedraw = true; return; }
+    if (assignedCount() === 0) { footer = 'Nothing to match — assign a kit'; needsRedraw = true; return; }
+    const gains = matchGains(parseLoudness(dspGet('loudness')));
+    let n = 0;
+    for (let i = 0; i < PAD_COUNT; i++) {
+        if (!kit.pads[i].sample) continue;
+        const g = setPadGain(kit, i, gains[i]);
+        dspSet('slot_gain_' + i, g);
+        n++;
+    }
+    persistWorkingKit();
+    footer = `Levels matched — ${n} pad${n === 1 ? '' : 's'}`;
+    needsRedraw = true;
 }
 
 /* Step button `idx` (0-based) pressed: single = select the matching RANDOM
@@ -1068,10 +1090,10 @@ function drawRandomPage() {
     /* Action list — selected row inverted; jog-press (or step double-press)
      * fires it. Step buttons 1..N mirror this list. */
     for (let i = 0; i < RANDOM_ACTIONS.length; i++) {
-        const y = 12 + i * 8;
+        const y = 10 + i * 7;
         const label = RANDOM_ACTIONS[i].name + (newArmed > 0 && RANDOM_ACTIONS[i].name === 'New' ? '?' : '');
         if (i === randomSel) {
-            fill_rect(0, y - 1, 62, 8, 1);
+            fill_rect(0, y - 1, 62, 7, 1);
             print(MX, y, clamp(label, 56), 0);
         } else {
             print(MX, y, clamp(label, 56), 1);
