@@ -128,7 +128,7 @@ import {
  * ------------------------------------------------------------------ */
 
 const MODULE_TAG = 'kit-builder';
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const PAD_COUNT = 16;
 
 /* Kit Builder pad 1..16 -> hardware pad note.
@@ -341,6 +341,18 @@ const RESUME_PAINT_FRAMES = 30;
  * a genuine later Play press is never the one that gets eaten. */
 let stopTransportRelease = 0;
 let suppressPlayEcho = 0;
+
+/* suspend_keeps_js means a plain Back doesn't unload us — the DSP (and this
+ * very tick()) keeps running in the background so a park-and-return is
+ * instant. That is also the bug: the DSP's on_midi hook stays wired to
+ * Move's internal pad-note stream while parked, so a track that starts
+ * playing while Kit Builder is merely backgrounded (not exited) still
+ * triggers its pads — the same phantom-note problem as the foreground case,
+ * just with the screen gone too. Muted for the duration of the park (once,
+ * on the way in) and unmuted in onResume() — the DSP and its loaded samples
+ * stay warm, they just make no sound until you're actually looking at it
+ * again. Shift+Back (a real exit) doesn't need this: the DSP is unloaded. */
+let mutedForPark = false;
 
 /* ------------------------------------------------------------------ *
  * LED helpers
@@ -1797,6 +1809,8 @@ globalThis.init = function () {
     soundingMask = 0;
     slotStat = '----------------';
     statPollTick = 0;
+    mutedForPark = false;
+    dspSet('mute', '0');   // defensive — a prior session could have left this DSP muted (park)
     dspSet('clear_all', '1');
     syncAllSlots();
     if (indexInfo) {
@@ -1822,9 +1836,15 @@ globalThis.init = function () {
 
 globalThis.tick = function () {
     /* While parked (Back pressed, module in background) the host calls this
-     * with the draw/LED bindings stubbed to no-ops. Do nothing — state is
-     * frozen until onResume(). (Framework contract: check overtakeParked.) */
-    if (globalThis.overtakeParked) return;
+     * with the draw/LED bindings stubbed to no-ops, but it keeps calling it —
+     * this module's JS, and its DSP, are still alive (suspend_keeps_js). Mute
+     * once on the way in (see mutedForPark above) so a track that starts
+     * playing while we're backgrounded can't make our pads sound off-screen;
+     * everything else stays frozen until onResume(). */
+    if (globalThis.overtakeParked) {
+        if (!mutedForPark) { mutedForPark = true; dspSet('mute', '1'); }
+        return;
+    }
 
     /* The Save keyboard draws its own screen and manages its own pad LEDs. */
     if (isTextEntryActive()) { tickTextEntry(); drawTextEntry(); return; }
@@ -1923,6 +1943,12 @@ globalThis.onResume = function () {
     /* E2 (Sam's call): the sequencer comes back STOPPED after a park, playhead
      * at step 1. The pattern + edit view are kept. */
     if (seqRunning) { seqRunning = false; seqStep = 0; footer = 'Resumed — seq stopped'; }
+
+    /* Undo the park mute (see mutedForPark above) unconditionally — even if
+     * our own flag is somehow out of sync, a real park always muted, and
+     * un-muting an already-unmuted DSP is a harmless no-op. */
+    mutedForPark = false;
+    dspSet('mute', '0');
 
     /* The overtake DSP may have been reloaded (fresh, empty) while parked —
      * re-push the kit's samples + the pattern. */

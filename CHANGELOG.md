@@ -2,6 +2,23 @@
 
 All notable changes to Kit Builder are recorded here.
 
+## [1.0.1] — 2026-09-11
+
+Fix: a track playing elsewhere could still trigger Kit Builder's pads while
+it was merely parked (Back), not actually exited.
+
+- `suspend_keeps_js` keeps the module (and its DSP) loaded across a plain
+  Back so resuming is instant — but that also keeps the DSP's `on_midi` hook
+  wired to Move's internal pad-note stream the whole time it's parked, which
+  is the same stream a playing track's own notes land on (see [1.0.0]'s
+  background-transport fix). A phantom note reaching a parked Kit Builder
+  triggered its pad samples off-screen, with no UI up to explain why.
+- Kit Builder now mutes its own DSP the moment it's parked (`kit_player.c`'s
+  existing `muted` flag — the same one that silences the audition player
+  while the Save keyboard is open) and unmutes on resume. The DSP and its
+  loaded samples stay warm, so parking is still instant; nothing can sound
+  until you're actually looking at it again.
+
 ## [1.0.0] — 2026-09-11
 
 Knob-grid redesign — every page redrawn on the schwung param-page grid
