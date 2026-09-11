@@ -2,6 +2,82 @@
 
 All notable changes to Kit Builder are recorded here.
 
+## [1.0.0] — 2026-09-11
+
+Knob-grid redesign — every page redrawn on the schwung param-page grid
+(docs/PARAM_PAGES.md): real knob / enum-square / trigger widgets, doors for
+the three list-shaped pages, knob-ring LEDs, and a background-playback fix.
+Hardware-tested.
+
+### Doors — RANDOM, SYSTEM, EXPORT
+
+- All three list-shaped pages now sit behind a **door**: closed, a
+  chevron-edged frame previews the content; a jog press opens it full-screen
+  (the jog wheel, repurposed from page-turn, scrolls while it's open); a
+  second press acts on the highlighted row. A door has to close on its own
+  click — there is no Back inside an overtake module to fall back on
+  (suspend_keeps_js hands it to the host).
+  - **RANDOM**'s door holds the action list; firing an action closes it.
+  - **SYSTEM**'s door holds the full index report; closes on any click —
+    nothing there to act on.
+  - **EXPORT**'s door wraps the whole page, since nothing else uses its
+    knobs. Rows are checkbox-first (checkbox left, format name beside it);
+    **Export now** drops the checkbox for a pill so it reads as an action.
+    Toggling a checkbox stays open, so several can be flipped in a row;
+    running Export now closes it.
+
+### RANDOM
+
+- **Duplicates** is an enum square (`AVOID`/`ALLOW`) on Knob 3; **Source** an
+  enum square on Knob 4 — both freed from the door's old cells. **Asn/Lck**
+  sit as a plain readout (value above, label below, like every knob widget)
+  on Knob 7/8's span, tightened to read apart from Dup/Src above them.
+
+### KIT
+
+- No Pad-select knob — pressing a pad already selects it, so a second control
+  for the same thing was dropped. **Gain** takes Knob 1 / cell 1 instead: the
+  cell only ever shows "Gain", and the value peeks in a short overlay while
+  the knob turns (~700ms), the way a plain schwung knob does, rather than
+  being crammed into the cell permanently. Cell 2 is just a "which pad"
+  readout. No lock line — the pad LED already carries it. Row 2 is the pool,
+  then the sample name in an inverted-pill (knocked-out) style.
+
+### SYSTEM
+
+- **Loop** and **Max sample size** are enum squares (Knob 1/2). **Rescan** is
+  a cap-button fired by turning Knob 3 — a trigger fires from the knob, not a
+  click (PARAM_PAGES.md) — latched to one Rescan per turn gesture
+  (`RESCAN_GESTURE_TICKS`). "Max size" stacks as two lines so it doesn't
+  overflow into neighbouring cells; the Rescan label shortened to "Scan" so
+  it doesn't clip against the panel's left edge.
+
+### Knob-ring LEDs
+
+- Knobs 1-4 light (white, brightness tracking value; dark = unbound) to show
+  which knob does something on the current page — schwung's own
+  `param_pages/knob_leds.mjs`, reused rather than reinvented.
+
+### Stops a playing background track on open
+
+- A Schwung track playing in the background sends its own notes onto the same
+  channel a real pad press does — confirmed from a device capture: identical
+  status byte, channel and shape, nothing to filter on. Kit Builder now checks
+  Move's transport on open and resume and, if it's already running, stops it
+  (a real Play-button press, injected — the technique `song-mode/ui.js`
+  already uses to drive Move's transport), removing the phantom presses at
+  the source instead of trying to tell them apart from real ones.
+
+### Fixes
+
+- Every centred label now clamps to the panel's safe margin instead of
+  running off it when centred near an edge or too wide for its cell (root
+  cause of the Rescan clipping, and a general safety net going forward).
+- Footer hints are `"Key: action"` strings, not `[key, action]` pairs — the
+  shared `drawMenuFooter` inverts only the key into its pill and prints the
+  action plain beside it; a bare pair had no colon to split on and collapsed
+  into one `JOG,PAGE`-style pill with the action lost.
+
 ## [0.3.1] — 2026-09-10
 
 Display overhaul + sequencer fixes.

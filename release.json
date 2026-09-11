@@ -1,9 +1,9 @@
 {
   "id": "kit-builder",
   "name": "Kit Builder",
-  "version": "0.3.1",
+  "version": "1.0.0",
   "component_type": "overtake",
   "stage": "stable",
-  "download_url": "https://github.com/sd88me/schwung-kit-builder/releases/download/v0.3.1/kit-builder-module.tar.gz",
-  "notes": "v0.3.1 — display overhaul: adopts the shared Schwung UI chrome (movy header, hint-pill footer on every page, transient messages as auto-dismissing overlay toasts) and the shared list widget for the EXPORT page. Sequencer fixes: the audition sequencer is force-cleared on module start, and Play always toggles run/stop. Longer status toasts. Builds on v0.3.0 (Batch E: loudness matching + audition step sequencer)."
+  "download_url": "https://github.com/sd88me/schwung-kit-builder/releases/download/v1.0.0/kit-builder-module.tar.gz",
+  "notes": "v1.0.0 — knob-grid redesign: every page redrawn with real knob/enum-square/trigger widgets on schwung's own param-page grid. RANDOM, SYSTEM and EXPORT now open behind a door (jog wheel scrolls, click acts). KIT drops the redundant Pad-select knob for a pad press; Gain moves to Knob 1 with a peek-overlay value. Knob-ring LEDs show which knob does something per page. Kit Builder now stops a playing background track on open, since its notes were indistinguishable from real pad presses. See CHANGELOG.md for the full list."
 }

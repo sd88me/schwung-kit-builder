@@ -11,7 +11,6 @@ presets, so it loads in Move directly and, being the identical file, in
 [MrDrums](https://github.com/handcraftedcc/schwung-mrdrums) as well. An optional
 Akai MPC `.xpm` exporter is available alongside it.
 
-
 ## Features
 
 - **Role-aware random fill.** Each pad draws from a union of sample categories
@@ -49,10 +48,13 @@ Nothing modifies or deletes source sample files.
 ## Using it
 
 Four pages, moved between by **turning the jog wheel**: `RANDOM`, `KIT`,
-`SYSTEM`, `EXPORT`. **Jog press** fires the current page's action. Every page
-carries the shared Schwung header (kit name / page name) and a footer of
-key→action hint pills; transient status ("Assigned 14 pads", "Saved: …") shows
-as an auto-dismissing overlay toast.
+`SYSTEM`, `EXPORT`. **Jog press** fires the current page's action — or, on
+RANDOM, SYSTEM and EXPORT, opens a **door**: a full-screen list that the jog
+wheel scrolls instead of paging, closed by a second jog press (there's no Back
+inside an overtake module to fall back on). Every page carries the shared
+Schwung header (kit name / page name) and a footer of key→action hint pills;
+transient status ("Assigned 14 pads", "Saved: …") shows as an auto-dismissing
+overlay toast.
 
 ### Pads (left 4×4 block, Move drum-rack layout — kick bottom-left)
 
@@ -72,8 +74,13 @@ kept, silent); **Shift + Back** exits.
 
 ### RANDOM page
 
-**Up/Down** (or **step buttons 1–6**, colour-coded) select an action;
-**jog press** (or a **double click step-button** press within ~0.4 s) — fires it:
+The six actions — **Assign**, **New**, **Save**, **Clear**, **Unlock All**,
+**Match Levels** — live behind a door. **Up/Down** move the selection; **jog
+press** opens the door full-screen, the jog wheel then scrolls it, and a
+second **jog press** fires the highlighted action and closes the door again.
+**Step buttons 1–6** (colour-coded) fire the same actions directly without
+opening the door — a single press selects, a **double click** within ~0.4 s
+fires:
 
 - **Assign** — fill every unlocked pad with a random sample of its pool
   (ascending pad order, no duplicates, avoids each pad's current sample; seeded
@@ -88,42 +95,51 @@ kept, silent); **Shift + Back** exits.
 - **Clear** — empty every unlocked pad.
 - **Unlock All** — drop every lock.
 - **Match Levels** — measure each assigned pad and trim gains so they sit at a
-  common loudness. A manual Knob-5 trim afterwards still overrides.
+  common loudness. A manual gain trim (KIT page, Knob 1) afterwards still
+  overrides.
 
-**Knob 1** toggles **Duplicates** (Avoid / Allow). **Knob 2** cycles **Source**
+**Knob 3** toggles **Duplicates** (Avoid / Allow). **Knob 4** cycles **Source**
 (User / Core / Both) — resets to User on a fresh `New` or launch.
 
 ### KIT page
 
-- **Knob 1** selects a pad (pool / sample / lock shown).
-- **Knob 5** trims the selected pad's gain, shown as dB.
-- **Up** favourites / **Down** rejects the pad's sample for future draws (mutually exclusive, toggles off on repeat);
-- **Shift+Up** / **Shift+Down** clear the whole favourite / reject list.
+- **Pressing a pad** selects it (pool / sample shown) — there's no separate
+  Pad knob, since a pad press already does that.
+- **Knob 1** trims the selected pad's gain: the cell just shows "Gain", and
+  the value peeks in a short overlay while the knob turns.
+- **Up** favourites / **Down** rejects the pad's sample for future draws
+  (mutually exclusive, toggles off on repeat); **Shift+Up** / **Shift+Down**
+  clear the whole favourite / reject list.
 - **Jog press** clears the pad unless locked.
 
 ### SYSTEM page
 
-- **Jog press** = **Rescan**: walks the selected library roots, classifies each
-sample by folder name (deepest match; filename-keyword fallback), and caches the
-index to `KitBuilder/.sample-index.json`. Runs in bounded chunks so the display
-never stalls.
-- A fixed header plus a scrollable list (**Up/Down**) shows: indexed
-count, loop-filter state, size cap, skipped ("Cut") count, the eight category
-buckets, and "Other".
-- **Knob 1** toggles the loop-name filter;
-- **Knob 2** cycles the max-sample-size cap (Off / 1M / 2M / 5M / 10M). Both persist in
-`KitBuilder/config.json` and take effect on the next Rescan.
+- **Knob 1** toggles the loop-name filter; **Knob 2** cycles the
+  max-sample-size cap (Off / 1M / 2M / 5M / 10M) — both persist in
+  `KitBuilder/config.json` and take effect on the next Rescan.
+- **Knob 3** fires **Rescan**: walks the selected library roots, classifies
+  each sample by folder name (deepest match; filename-keyword fallback), and
+  caches the index to `KitBuilder/.sample-index.json`. Runs in bounded chunks
+  so the display never stalls.
+- The index report — indexed count and age, skipped ("Cut") count, and counts
+  for all eight categories plus "Other" — lives behind a door: **jog press**
+  opens it full-screen, the jog wheel scrolls it, and a second **jog press**
+  closes it.
 
 ### EXPORT page
 
-**Up/Down** select a row, **jog press** acts on it:
+Also a door — the whole page, since nothing else uses these knobs. **Up/Down**
+move the selection; **jog press** opens it full-screen, the jog wheel then
+scrolls it too, and a **jog press** toggles the highlighted row:
 
 - **Move preset `.ablpreset`** (on by default) — the native Move drum-rack
   preset, written to `Track Presets/`; also loads in MrDrums.
 - **MPC `.xpm`** (off by default) — an Akai MPC program with each assigned
   sample gathered beside it (`MANIFEST.txt` lists anything that couldn't be
   copied).
-- **Export now** — run the enabled formats for the current kit without a Save.
+- **Export now** — run the enabled formats for the current kit without a Save;
+  running it closes the door, but toggling a format above leaves it open so
+  you can flip several in a row.
 
 The toggles persist in `config.json → exports`. A Save runs the same set.
 

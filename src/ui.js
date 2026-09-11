@@ -7,10 +7,13 @@
  *   - opens as an overtake module; receives pad + Shift+Pad events
  *     (left 4x4 drum-rack block -> Kit Builder pads 1-16)
  *   - drives RGB pad LEDs; Shift+Pad toggles a visual-only lock
- *   - jog-wheel TURN moves between pages (RANDOM / KIT / SYSTEM)
- *   - jog-wheel PRESS is the page's momentary button
+ *   - jog-wheel TURN moves between pages (RANDOM / KIT / SYSTEM / EXPORT),
+ *     except while a door is open (see "doors" below), where it scrolls one
+ *   - jog-wheel PRESS is the page's momentary button, or opens/closes a door
  *   - Back parks the module with state intact (capabilities.suspend_keeps_js);
- *     Shift+Back fully exits. onResume() repaints on unpark.
+ *     Shift+Back fully exits. onResume() repaints on unpark. Because
+ *     suspend_keeps_js hands plain Back to the host rather than to us, this
+ *     module has no Back of its own — a door has to close on its own click.
  *
  * Stage 2 (spec §8) — sample index:
  *   - loads config (embedded default + optional KitBuilder/config.json)
@@ -30,17 +33,22 @@
  *
  * Stage 3 (spec §6, §10) — kit model + seeded assignment:
  *   - 16-pad internal kit model (core/kit_model.mjs), the single source of truth
- *   - RANDOM page: Up/Down pick an action, jog-press fires it —
+ *   - RANDOM page: Up/Down (or step buttons) pick an action; the list itself
+ *     lives behind a DOOR (PARAM_PAGES.md) — jog-press opens it, jog scrolls,
+ *     a second press fires the highlighted one and closes it again —
  *       Assign      = seeded random fill of every unlocked pad, ascending pad
  *                     order, duplicate-avoided, current-sample-avoided (§10.2)
  *       Clear       = empty every unlocked pad (§13.2)
  *       Unlock All  = drop every lock (§13.2)
- *     Knob 3 turn toggles Duplicates (Avoid / Allow). All momentary actions
- *     honour the §10.7 in-flight guard.
- *   - KIT page: Knob 1 selects a pad, jog-press = Clear Pad (§13.3)
+ *     Knob 3 turn toggles Duplicates (Avoid / Allow), Knob 4 cycles Source.
+ *     All momentary actions honour the §10.7 in-flight guard.
+ *   - KIT page: Knob 1 selects a pad, Knob 2 trims its gain, jog-press = Clear
+ *     Pad (§13.3)
  *   - LEDs: green = assigned+unlocked, white = assigned+locked, teal = empty,
  *     dim white = empty+locked, red flash = a role had no candidate (§12)
  *   Core logic: core/kit_model.mjs, core/random_assign.mjs, core/sample_index.mjs.
+ *   Knob-grid layout for RANDOM / KIT / SYSTEM: see the KNOB1..KNOB4 table
+ *   above the constants below, and the per-page draw functions' own comments.
  *
  * Stage 5 (spec §15) — persistence:
  *   - RANDOM page gains New and Save. Save opens the shared keyboard (mutes the
@@ -83,6 +91,13 @@ import {
     showOverlay, tickOverlay, drawOverlay, hideOverlay, isOverlayActive
 } from '/data/UserData/schwung/shared/menu_layout.mjs';
 
+/* Knob-ring LEDs (CC 71-78): the chain editor's own "which physical knob does
+ * something" cue (knobs 1-4 white, 5-8 amber, dark = unbound). Kit Builder
+ * only ever drives knobs 1-4, page-dependent — see knobLedValues() below. */
+import {
+    updateKnobLEDs, resetKnobLedCache
+} from '/data/UserData/schwung/shared/param_pages/knob_leds.mjs';
+
 import {
     loadConfig, loadIndex, createScan, summarize, summarizeRecords
 } from './core/sample_index.mjs';
@@ -113,7 +128,7 @@ import {
  * ------------------------------------------------------------------ */
 
 const MODULE_TAG = 'kit-builder';
-const VERSION = '0.3.1';
+const VERSION = '1.0.0';
 const PAD_COUNT = 16;
 
 /* Kit Builder pad 1..16 -> hardware pad note.
@@ -151,7 +166,9 @@ const LED = {
 const PAGES = ['RANDOM', 'KIT', 'SYSTEM', 'EXPORT'];
 
 /* EXPORT page (Batch D): rows 0..n-1 toggle an exporter; the last row runs
- * every enabled one now. Up/Down select, jog-press acts on the selection. */
+ * every enabled one now. Up/Down always select; the list is also a door — a
+ * jog-click opens it, the jog wheel then scrolls too, and a click toggles a
+ * row (stays open) or runs Export now (closes). */
 const EXPORT_ROWS = [
     { id: 'mrdrums', label: 'Move preset .ablpreset' },
     { id: 'mpcxpm',  label: 'MPC .xpm' },
@@ -171,12 +188,31 @@ const RANDOM_ACTIONS = [
 const DOUBLE_PRESS_MS = 400;   // step-button double-press window
 const ARM_TICKS = 390;         // ~9 s confirm window for New
 
-/* Knob CCs used as encoder controls in this overtake shell. */
-const KNOB_PAD_SELECT = MoveKnob1;   // 71 — knob 1 — KIT page: Selected Pad (§13.3 encoder 1)
-const KNOB_DUPLICATES = MoveKnob1;   // 71 — knob 1 — RANDOM page: Duplicates (§13.2)
-const KNOB_SOURCE = MoveKnob1 + 1;   // 72 — knob 2 — RANDOM page: Source (§13.2)
-const KNOB_GAIN = MoveKnob1 + 4;     // 75 — knob 5 — KIT page: per-pad Gain (§13.3)
+/* Knob CCs used as encoder controls in this overtake shell. Each of the four
+ * is one physical knob shared by several pages — same pattern the grid uses
+ * everywhere else, just picked by page instead of by a chain_params contract:
+ *   KNOB1  71  RANDOM: (door, no knob)   KIT: Gain         SYSTEM: Loop
+ *   KNOB2  72  RANDOM: (door, no knob)   KIT: (no knob)    SYSTEM: Max size
+ *   KNOB3  73  RANDOM: Duplicates        KIT: (readout)    SYSTEM: Rescan
+ *   KNOB4  74  RANDOM: Source            KIT: (readout)    SYSTEM: (door)
+ * KIT has no Pad knob — pressing a pad already selects it (onPadPress).
+ */
+const KNOB1 = MoveKnob1;
+const KNOB2 = MoveKnob1 + 1;
+const KNOB3 = MoveKnob1 + 2;
+const KNOB4 = MoveKnob1 + 3;
 const GAIN_STEP = 0.04;
+/* A momentary fires from the KNOB, not a click — PARAM_PAGES.md "a momentary
+ * fires from the knob too, and it latches per gesture": one flick of the
+ * encoder is a dozen detents, so a raw per-detent fire would rescan a dozen
+ * times. The first detent of a turn fires; further detents just extend the
+ * gesture, and it can fire again once the knob has been still this long. */
+const RESCAN_GESTURE_TICKS = 12;   // ~270ms at ~44Hz
+/* PARAM_PAGES.md: "a turn PEEKS the list", ~700ms — the on-screen cell stays
+ * a bare label; the live value shows in a short overlay instead. Kit Builder
+ * has only one such knob (KIT's Gain) so this borrows the shared toast
+ * overlay directly rather than a second timing system. */
+const KNOB_PEEK_TICKS = 30;        // ~700ms at ~44Hz
 /* The Move encoders have no detents and fire several ticks per light touch.
  * Enum knobs (Duplicates / Source) accumulate ticks and only step once the
  * run crosses this threshold, so a stray brush doesn't flip them. */
@@ -227,6 +263,17 @@ let favourites = new Set();
 let exportSel = 0;
 let exportPrefs = { mrdrums: true, mpcxpm: false };
 
+/* RANDOM's action list and SYSTEM's index report are DOORS (PARAM_PAGES.md:
+ * "a door you were sent to opens; one you paged past stays shut") — the page
+ * shows a closed preview, a jog-click opens it full-screen, and the jog wheel
+ * repurposes from page-turn to list-scroll while it's open. There is no Back
+ * out of it (suspend_keeps_js hands plain Back to the host, never to us — see
+ * Stage 1), so a second jog-click is what closes it: on RANDOM that click also
+ * fires the highlighted action, on SYSTEM it's a plain close. */
+let doorOpen = false;
+let systemInfoSel = 0;      // scroll cursor inside the open SYSTEM door
+let rescanKnobCooldown = 0; // ticks left in the current Rescan knob gesture
+
 /* E2 — audition step sequencer. Rec toggles the edit view; Play toggles run.
  * 16 fixed steps, one 16-bit mask per pad. Transient: not saved, not exported. */
 let seqMode = false;                          // Rec view — step buttons edit the grid
@@ -256,8 +303,8 @@ let needsRedraw = true;
 /* ---- Stage 2: sample index (spec §8) --------------------------------------- *
  * config + a cached-or-live index summary. The recursive scan is pumped from
  * tick() in bounded chunks so it never blocks the display. Rescan is fired by
- * a jog-press on the SYSTEM page (§13.4 "Rebuild"), with the §10.7 in-flight
- * guard. */
+ * turning Knob 3 on the SYSTEM page (§13.4 "Rebuild"), with the §10.7
+ * in-flight guard. */
 let config = null;
 let indexInfo = null;        // parsed cached index, or null
 let indexSummary = summarize(null);
@@ -286,6 +333,14 @@ const LEDS_PER_FRAME = 8;
  * mirrors mono's resumePaints pattern (spread, forced). */
 let resumePaints = 0;
 const RESUME_PAINT_FRAMES = 30;
+
+/* Stopping a background track on open (see stopBackgroundTransport below):
+ * stopTransportRelease counts down to the release half of the injected Play
+ * press; suppressPlayEcho briefly ignores our own MovePlay case in case the
+ * injection loops back to us too — it disarms itself quickly either way, so
+ * a genuine later Play press is never the one that gets eaten. */
+let stopTransportRelease = 0;
+let suppressPlayEcho = 0;
 
 /* ------------------------------------------------------------------ *
  * LED helpers
@@ -381,6 +436,40 @@ function requestFullLedRepaint() {
     ledList = buildLedList();
     ledInitIndex = 0;
     ledInitPending = true;
+}
+
+/* Knob-ring LEDs: one normalised 0..1 value per physical knob (null = dark,
+ * "nothing bound here" — knob_leds.mjs). Mirrors the KNOB1..KNOB4 table in
+ * the constants above exactly, so a lit ring and a working knob never
+ * disagree about which knob that is. Knobs 5-8 are never driven by this
+ * module and stay dark. */
+function knobLedValues() {
+    const v = new Array(8).fill(null);
+    if (seqMode) {
+        v[0] = PAD_COUNT > 1 ? selectedPad / (PAD_COUNT - 1) : 0;   // Knob 1: pad-lane select
+        return v;
+    }
+    switch (PAGES[pageIndex]) {
+        case 'RANDOM':
+            v[2] = preventDuplicates ? 1 : 0;
+            v[3] = SOURCE_MODES.length > 1 ? SOURCE_MODES.indexOf(sourceMode) / (SOURCE_MODES.length - 1) : 0;
+            break;
+        case 'KIT': {
+            const p = kit.pads[selectedPad];
+            const gain = (p.playback && p.playback.gain != null) ? p.playback.gain : 1;
+            v[0] = Math.max(0, Math.min(1, gain / 2));   // Knob 1 — no Pad knob to light
+            break;
+        }
+        case 'SYSTEM': {
+            v[0] = scanPrefs.skip_loops ? 1 : 0;
+            const at = Math.max(0, SIZE_CAP_CHOICES.indexOf(scanPrefs.max_sample_size));
+            v[1] = SIZE_CAP_CHOICES.length > 1 ? at / (SIZE_CAP_CHOICES.length - 1) : 0;
+            v[2] = 1;   // Rescan — a trigger reads as "ready", not as a level
+            break;
+        }
+        // EXPORT: Up/Down + jog only, no knob does anything.
+    }
+    return v;
 }
 
 /* ------------------------------------------------------------------ *
@@ -716,6 +805,7 @@ function onStepAction(idx) {
 
     pageIndex = PAGES.indexOf('RANDOM');
     randomSel = idx;
+    doorOpen = false;   // a step-button shortcut jumps pages; any open door goes with it
     needsRedraw = true;
 
     const armed = RANDOM_ACTIONS[idx].name === 'New' && newArmed > 0;
@@ -788,6 +878,26 @@ function refreshIndexView() {
     indexSummary.skippedLoops = (indexInfo && indexInfo.skipped_loops) || 0;
     indexSummary.skippedOversize = (indexInfo && indexInfo.skipped_oversize) || 0;
     indexAgeText = relativeAge(indexInfo && indexInfo.generated_at);
+}
+
+/* Rows for the SYSTEM info door — the full index report, one row per line.
+ * Shared by the door preview (first few), the open full-screen list, and the
+ * scroll clamp, so all three always agree on what there is to show. */
+function systemInfoRows() {
+    const s = indexSummary;
+    return [
+        { label: 'Indexed', value: `${s.indexed} · ${indexAgeText}` },
+        { label: 'Cut', value: `${s.skippedLoops || 0} loop, ${s.skippedOversize || 0} big` },
+        { label: 'Kick', value: String(s.kick) },
+        { label: 'Snare', value: String(s.snare) },
+        { label: 'Clap', value: String(s.clap) },
+        { label: 'Hats', value: String(s.hats) },
+        { label: 'Toms', value: String(s.toms) },
+        { label: 'Perc', value: String(s.perc) },
+        { label: 'Cymbal', value: String(s.cym) },
+        { label: 'FX', value: String(s.fx) },
+        { label: 'Other', value: String(s.other) }
+    ];
 }
 
 function fireRescan() {
@@ -923,6 +1033,27 @@ function pollSlotStatus() {
     needsRedraw = true;
 }
 
+/* Stop Move's own transport if it's already running when Kit Builder opens or
+ * resumes. A playing track's own notes reach onMidiMessageInternal
+ * indistinguishable from a real pad press (see the pad-note comment below —
+ * confirmed from a device capture, no field to filter on), so this removes
+ * them at the source instead. A real Play press is a CC85 (MovePlay) press +
+ * release injected on cable-0 — the pattern song-mode/ui.js established for
+ * driving Move's transport the same way a physical press would — and it only
+ * ever fires when shadow_get_overlay_state() reports transport already
+ * playing, so it can never accidentally START it. */
+function stopBackgroundTransport() {
+    if (typeof shadow_get_overlay_state !== 'function') return;
+    if (typeof move_midi_inject_to_move !== 'function') return;
+    const ov = shadow_get_overlay_state();
+    if (!ov || !ov.transportPlaying) return;
+    suppressPlayEcho = 6;   // in case the injection loops back to our own MovePlay case too
+    move_midi_inject_to_move([0x0B, 0xB0, MovePlay, 127]);
+    stopTransportRelease = 2;
+    footer = 'Stopped background playback';
+    console.log(`${MODULE_TAG}: transport was playing on open — stopping it`);
+}
+
 /* ------------------------------------------------------------------ *
  * MIDI
  * ------------------------------------------------------------------ */
@@ -960,6 +1091,12 @@ globalThis.onMidiMessageInternal = function (data) {
 
         const padIdx = KIT_PAD_NOTES.indexOf(d1);
         if (padIdx === -1) return;              // ignore the unused 16 pads
+        /* A background Schwung track's own playing notes reach here
+         * indistinguishable from a real pad press — same status byte 0x90/
+         * 0x80, same channel 0, no source id in the 3-byte message. Confirmed
+         * from a device capture (2026-09-11): no field to filter on. Fixed at
+         * the source instead — stopBackgroundTransport() stops Move's
+         * transport on open/resume when it's already running. */
         if (isOn) onPadPress(padIdx, d2);
         else if (heldPad === padIdx) heldPad = -1;   // released
         return;
@@ -978,6 +1115,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 return;
 
             case MovePlay:       /* E2 — run / stop the sequencer */
+                if (suppressPlayEcho > 0 && d2 === 127) { suppressPlayEcho = 0; return; }
                 if (d2 === 127) toggleSeqRun();
                 return;
 
@@ -987,14 +1125,34 @@ globalThis.onMidiMessageInternal = function (data) {
              * See onResume(). */
 
             case MoveMainKnob: {
-                /* Jog-wheel turn = page navigation (RANDOM / KIT / SYSTEM).
-                 * One page per detent regardless of turn speed. */
+                /* Jog-wheel turn: page navigation when no door is open. RANDOM's
+                 * action list, SYSTEM's info report and EXPORT's row list are
+                 * doors — while one is open the jog scrolls IT instead, and
+                 * paging is unavailable until a click closes it (see doorOpen
+                 * above). */
                 const delta = decodeDelta(d2);
-                if (delta !== 0) {
-                    const dir = delta > 0 ? 1 : -1;
-                    pageIndex = (pageIndex + dir + PAGES.length) % PAGES.length;
+                if (delta === 0) return;
+                const dir = delta > 0 ? 1 : -1;
+
+                if (doorOpen && PAGES[pageIndex] === 'RANDOM') {
+                    randomSel = (randomSel + dir + RANDOM_ACTIONS.length) % RANDOM_ACTIONS.length;
                     needsRedraw = true;
+                    return;
                 }
+                if (doorOpen && PAGES[pageIndex] === 'SYSTEM') {
+                    const n = systemInfoRows().length;
+                    systemInfoSel = Math.max(0, Math.min(n - 1, systemInfoSel + dir));
+                    needsRedraw = true;
+                    return;
+                }
+                if (doorOpen && PAGES[pageIndex] === 'EXPORT') {
+                    exportSel = (exportSel + dir + EXPORT_ROWS.length) % EXPORT_ROWS.length;
+                    needsRedraw = true;
+                    return;
+                }
+
+                pageIndex = (pageIndex + dir + PAGES.length) % PAGES.length;
+                needsRedraw = true;
                 return;
             }
 
@@ -1018,7 +1176,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 }
                 return;
 
-            case KNOB_PAD_SELECT: {   /* CC 71 = knob 1 */
+            case KNOB1: {   /* CC 71 — KIT: Gain trim · SYSTEM: Loop filter (RANDOM: door, no knob) */
                 const delta = decodeDelta(d2);
                 if (delta === 0) return;
 
@@ -1034,26 +1192,18 @@ globalThis.onMidiMessageInternal = function (data) {
                     return;
                 }
 
-                if (PAGES[pageIndex] === 'RANDOM') {
-                    /* Duplicates enum — CW = Allow, CCW = Avoid (§13.2).
-                     * Accumulate ticks so a light touch doesn't flip it. */
-                    dupKnobTicks += delta;
-                    if (Math.abs(dupKnobTicks) < ENUM_KNOB_TICKS) return;
-                    const next = dupKnobTicks < 0;   // CCW -> Avoid
-                    dupKnobTicks = 0;
-                    if (next !== preventDuplicates) {
-                        preventDuplicates = next;
-                        footer = `Duplicates: ${preventDuplicates ? 'Avoid' : 'Allow'}`;
-                        needsRedraw = true;
-                    }
-                    return;
-                }
-
                 if (PAGES[pageIndex] === 'KIT') {
-                    /* Selected Pad 1..16 (spec §13.3 encoder 1). */
-                    const dir = delta > 0 ? 1 : -1;
-                    selectedPad = Math.max(0, Math.min(PAD_COUNT - 1, selectedPad + dir));
-                    needsRedraw = true;
+                    /* Per-pad gain trim (spec §13.3). No Pad-select knob — a
+                     * pad press already picks the pad (onPadPress) — so Gain
+                     * takes the freed seat. The cell only ever shows "Gain";
+                     * the value peeks in an overlay while the knob turns, the
+                     * way a plain schwung knob does. */
+                    const g = setPadGain(kit, selectedPad, (kit.pads[selectedPad].playback.gain || 1) + delta * GAIN_STEP);
+                    dspSet('slot_gain_' + selectedPad, g);
+                    persistWorkingKit();
+                    if (typeof showOverlay === 'function') showOverlay('Gain', gainToDbLabel(g), KNOB_PEEK_TICKS);
+                    needsRedraw = true;   // the knob's own arc still redraws live
+                    return;
                 }
 
                 if (PAGES[pageIndex] === 'SYSTEM') {
@@ -1072,7 +1222,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 return;
             }
 
-            case KNOB_SOURCE: {
+            case KNOB2: {   /* CC 72 — SYSTEM: Max sample size (RANDOM/KIT: nothing on this knob) */
                 const delta = decodeDelta(d2);
                 if (delta === 0) return;
 
@@ -1090,12 +1240,46 @@ globalThis.onMidiMessageInternal = function (data) {
                         footer = `Max sample: ${scanSizeLabel()} — Rescan to apply`;
                         needsRedraw = true;
                     }
+                }
+                return;
+            }
+
+            case KNOB3: {   /* CC 73 — RANDOM: Duplicates · SYSTEM: Rescan trigger (KIT: readout, no knob) */
+                const delta = decodeDelta(d2);
+                if (delta === 0) return;
+
+                if (PAGES[pageIndex] === 'RANDOM') {
+                    /* Duplicates enum — CW = Allow, CCW = Avoid (§13.2).
+                     * Accumulate ticks so a light touch doesn't flip it. */
+                    dupKnobTicks += delta;
+                    if (Math.abs(dupKnobTicks) < ENUM_KNOB_TICKS) return;
+                    const next = dupKnobTicks < 0;   // CCW -> Avoid
+                    dupKnobTicks = 0;
+                    if (next !== preventDuplicates) {
+                        preventDuplicates = next;
+                        footer = `Duplicates: ${preventDuplicates ? 'Avoid' : 'Allow'}`;
+                        needsRedraw = true;
+                    }
                     return;
                 }
 
-                /* RANDOM page: Source enum — cycles User -> Core -> Both (§13.2).
-                 * Same tick accumulation as Duplicates. */
+                if (PAGES[pageIndex] === 'SYSTEM') {
+                    /* A trigger fires from the KNOB, not a click (PARAM_PAGES.md)
+                     * — the first detent of a turn fires Rescan, further detents
+                     * just extend the gesture (RESCAN_GESTURE_TICKS, decayed in
+                     * tick()) so one flick can't queue several rescans. */
+                    if (rescanKnobCooldown <= 0) fireRescan();
+                    rescanKnobCooldown = RESCAN_GESTURE_TICKS;
+                }
+                return;
+            }
+
+            case KNOB4: {   /* CC 74 — RANDOM: Source (KIT/SYSTEM: readout / door, no knob) */
                 if (PAGES[pageIndex] !== 'RANDOM') return;
+                const delta = decodeDelta(d2);
+                if (delta === 0) return;
+                /* Source enum — cycles User -> Core -> Both (§13.2). Same tick
+                 * accumulation as Duplicates. */
                 srcKnobTicks += delta;
                 if (Math.abs(srcKnobTicks) < ENUM_KNOB_TICKS) return;
                 const dir = srcKnobTicks > 0 ? 1 : -1;
@@ -1111,32 +1295,39 @@ globalThis.onMidiMessageInternal = function (data) {
                 return;
             }
 
-            case KNOB_GAIN: {
-                /* KIT page: per-pad gain trim (spec §13.3 encoder 5). */
-                if (PAGES[pageIndex] !== 'KIT') return;
-                const delta = decodeDelta(d2);
-                if (delta === 0) return;
-                const g = setPadGain(kit, selectedPad, (kit.pads[selectedPad].playback.gain || 1) + delta * GAIN_STEP);
-                dspSet('slot_gain_' + selectedPad, g);
-                persistWorkingKit();
-                needsRedraw = true;   // gain shows on the KIT page itself
-                return;
-            }
-
             case MoveMainButton:
-                /* Jog-press is the page's momentary button (Move's encoders
-                 * don't physically click, so the jog stands in for the encoder
-                 * buttons of spec §13.2 / §13.3 / §13.4):
-                 *   RANDOM -> selected action   KIT -> Clear Pad
-                 *   SYSTEM -> Rescan            EXPORT -> selected row
+                /* Jog-press acts on the page's focus. RANDOM, SYSTEM and
+                 * EXPORT all carry a door instead of a direct action: closed,
+                 * a click opens it; open, a click acts on the highlighted row
+                 * — there is no Back to fall back on inside an overtake module
+                 * (suspend_keeps_js hands it to the host, see Stage 1), so the
+                 * door has to close on its own click. A TERMINAL action closes
+                 * it (RANDOM's fire, EXPORT's Export now); a non-terminal one
+                 * doesn't, so a checkbox row can be toggled repeatedly without
+                 * reopening (EXPORT), and SYSTEM's read-only report just closes
+                 * on any click since there's nothing there to act on.
+                 *   KIT -> Clear Pad
                  * A held flag drives the on-screen button; fires on press only. */
                 if (d2 > 0 && !assignHeld) {
                     assignHeld = true;
                     const pg = PAGES[pageIndex];
-                    if (pg === 'RANDOM') fireRandomAction();
-                    else if (pg === 'KIT') fireClearPad();
-                    else if (pg === 'SYSTEM') fireRescan();
-                    else if (pg === 'EXPORT') fireExportAction();
+                    if (pg === 'RANDOM') {
+                        if (doorOpen) { fireRandomAction(); doorOpen = false; }
+                        else doorOpen = true;
+                    } else if (pg === 'KIT') {
+                        fireClearPad();
+                    } else if (pg === 'SYSTEM') {
+                        if (doorOpen) doorOpen = false;
+                        else { doorOpen = true; systemInfoSel = 0; }
+                    } else if (pg === 'EXPORT') {
+                        if (doorOpen) {
+                            const terminal = EXPORT_ROWS[exportSel].id === '__now';
+                            fireExportAction();
+                            if (terminal) doorOpen = false;
+                        } else {
+                            doorOpen = true;
+                        }
+                    }
                     needsRedraw = true;
                 } else if (d2 === 0 && assignHeld) {
                     assignHeld = false;
@@ -1167,11 +1358,18 @@ const MX = 6;          // left margin
 const RX = 122;        // right edge (usable)
 
 /* Shared chrome puts the header in rows 0..6 and the hint footer in 57..63,
- * so every page body lives between. */
+ * so every page body lives between — the same knob-grid band schwung's own
+ * param pages draw into (PARAM_PAGES.md, render_page_movy.mjs): four 32px
+ * columns, a row of controls at BODY_TOP with its label below, a second row
+ * lower down. RANDOM and SYSTEM each give half that grid to a DOOR instead of
+ * knobs — see doorOpen above. */
 const BODY_TOP = 10;
 const BODY_BOTTOM = 55;
-
-const SOURCE_SHORT = { user: 'Usr', core: 'Cor', both: 'U+C' };
+const CELL_W = 32;
+const LBL0_Y = BODY_TOP + 15;   // row-0 widgets are ~15px tall; label goes under
+const ROW1_Y = 33;
+const LBL1_Y = ROW1_Y + 15;
+function cellCX(col) { return col * CELL_W + CELL_W / 2; }
 
 function tw(s) {
     return (typeof text_width === 'function') ? text_width(String(s)) : String(s).length * 5;
@@ -1185,111 +1383,287 @@ function clamp(s, maxPx) {
 function line(x, y, s) {
     print(x, y, clamp(s, RX - x), 1);
 }
+/* Every centered label goes through here — clamped to the same MX/RX margin
+ * `line()` uses, so a word too wide for its cell (or centred near the panel's
+ * own edge, which crops before x=MX) shifts in from that edge instead of
+ * running off it. Only the POSITION moves; nothing is truncated. */
+function centerPrint(cx, y, s) {
+    const w = tw(s);
+    let x = Math.round(cx - w / 2);
+    if (x < MX) x = MX;
+    else if (x + w > RX) x = Math.max(MX, RX - w);
+    print(x, y, s, 1);
+}
+
+/* ---- knob-grid widgets (PARAM_PAGES.md vocabulary, drawn with the native
+ * fill_rect / draw_line / draw_circle / draw_arc bindings js_display.c gives
+ * every module — the same primitives schwung's own render_page_movy.mjs
+ * reaches for when it has them). ------------------------------------------- */
+
+function frameRect(x, y, w, h, fg) {
+    fg = fg === undefined ? 1 : fg;
+    fill_rect(x, y, w, 1, fg);
+    fill_rect(x, y + h - 1, w, 1, fg);
+    fill_rect(x, y, 1, h, fg);
+    fill_rect(x + w - 1, y, 1, h, fg);
+}
+/* The one idiom every framed widget below wears: clear the four corner
+ * pixels so a filled/framed rect reads as a rounded plate, not a hard box.
+ * `fg` is the frame's own colour — the notch clears to whatever's behind it. */
+function notchCorners(x, y, w, h, fg) {
+    const bg = (fg === undefined ? 1 : fg) ? 0 : 1;
+    fill_rect(x, y, 1, 1, bg);
+    fill_rect(x + w - 1, y, 1, 1, bg);
+    fill_rect(x, y + h - 1, 1, 1, bg);
+    fill_rect(x + w - 1, y + h - 1, 1, 1, bg);
+}
+
+const BOX_H = 15;
+
+/* A short list, 3+ options: a notched frame sized to the value, the value
+ * printed inside it. Src, Loop, Max size. */
+function drawEnumSquare(cx, topY, text) {
+    const w = Math.max(20, Math.min(CELL_W - 4, tw(text) + 8));
+    const x = Math.round(cx - w / 2);
+    frameRect(x, topY, w, BOX_H);
+    notchCorners(x, topY, w, BOX_H);
+    print(Math.round(cx - tw(text) / 2), topY + 4, text, 1);
+}
+
+const ARC_START_DEG = 230, ARC_SWEEP_DEG = 260;     // the track — open at the bottom
+const KNOB_START_DEG = 225, KNOB_SWEEP_DEG = 270;   // the pointer's travel
+
+/* A turnable value: an open arc (the gap marks the ends of travel) with a
+ * pointer floating between hub and rim. Pad, Gain. `val` is 0..1. */
+function drawKnob(cx, topY, val) {
+    const r = 6, cy = topY + 7;
+    draw_arc(cx, cy, r, ARC_START_DEG, ARC_SWEEP_DEG);
+    const deg = KNOB_START_DEG + Math.max(0, Math.min(1, val)) * KNOB_SWEEP_DEG;
+    const rad = deg * Math.PI / 180;
+    const sin = Math.sin(rad), cos = Math.cos(rad);
+    draw_line(Math.round(cx + r * 0.15 * sin), Math.round(cy - r * 0.15 * cos),
+              Math.round(cx + r * 0.82 * sin), Math.round(cy - r * 0.82 * cos));
+}
+
+/* A momentary: a circle, filled while it's doing its thing. Rescan — fired by
+ * turning its knob, not by clicking the widget (see KNOB3 below), so "filled"
+ * here means "a scan is running" rather than "just clicked". */
+function drawTrigger(cx, topY, active) {
+    const r = 6, cy = topY + 7;
+    if (active) fill_circle(cx, cy, r); else draw_circle(cx, cy, r);
+}
+
+/* A door: no knob, a way in. Broken right edge + a chevron in the gap, a
+ * title, and as many preview lines as fit — the same shape as an opaque box,
+ * stretched to hold a whole list's worth of preview instead of one value. */
+/* The door's own frame: a notched box with its right edge broken by a
+ * chevron — "no knob here, only a way in". Shared by every door on the
+ * grid; each page draws its own content inside it. */
+function drawDoorFrame(x, y, w, h) {
+    const gapY = y + Math.floor(h / 2) - 2;
+    fill_rect(x, y, w, 1, 1);
+    fill_rect(x, y + h - 1, w, 1, 1);
+    fill_rect(x, y, 1, h, 1);
+    fill_rect(x + w - 1, y, 1, gapY - y, 1);
+    fill_rect(x + w - 1, gapY + 5, 1, y + h - (gapY + 5), 1);
+    notchCorners(x, y, w, h);
+    for (let i = 0; i < 3; i++) {
+        fill_rect(x + w - 6 + i, gapY + i, 1, 1, 1);
+        fill_rect(x + w - 6 + i, gapY + 4 - i, 1, 1, 1);
+    }
+}
+
+/* A door showing static preview TEXT — RANDOM's action list, SYSTEM's index
+ * report. EXPORT's door instead draws its own checkbox rows straight into a
+ * drawDoorFrame (see drawExportPage) since a plain text line can't show a
+ * checkbox. */
+function drawDoorPreview(x, y, w, h, title, previewLines) {
+    drawDoorFrame(x, y, w, h);
+    print(x + 3, y + 2, clamp(title, w - 10), 1);
+    for (let i = 0; i < previewLines.length; i++) {
+        print(x + 3, y + 12 + i * 8, clamp(previewLines[i], w - 6), 1);
+    }
+}
+
+function drawCheckbox(x, y, on, inverted) {
+    const fg = inverted ? 0 : 1;
+    frameRect(x, y, 5, 5, fg);
+    notchCorners(x, y, 5, 5, fg);
+    if (on) fill_rect(x + 1, y + 1, 3, 3, fg);
+}
+
+/* The inverted-pill style: a filled notched plate with the text knocked out —
+ * used for the KIT page's sample name, the one piece of text on these pages
+ * that's a VALUE worth setting apart from its label. */
+function drawInvertedPill(x, y, w, text) {
+    const h = 9;
+    fill_rect(x, y, w, h, 1);
+    notchCorners(x, y, w, h);
+    print(x + 3, y + 1, clamp(text, w - 6), 0);
+}
 
 /* Top strip — shared movy header: kit name left, page name right. */
 function drawHeader() {
     drawMenuHeader(currentKitName || 'Kit Builder', seqMode ? 'SEQ' : PAGES[pageIndex]);
 }
 
-/* Bottom strip — shared hint pills, per page. */
+/* Bottom strip — shared hint pills, per page. Each hint is "Key: action" —
+ * drawMenuFooter inverts only the key into its pill and prints the action
+ * plain beside it (menu_layout.mjs's drawFooter). A bare [key, action] pair
+ * has no colon to split on and collapses into one pill with the action lost,
+ * which is what this used to pass. */
 function drawPageFooter() {
     let hints;
     if (seqMode) {
-        hints = [['Step', 'edit'], ['K1', 'pad'], ['Play', seqRunning ? 'stop' : 'run'], ['Rec', 'close']];
+        hints = ['Step: edit', 'K1: pad', `Play: ${seqRunning ? 'stop' : 'run'}`, 'Rec: close'];
     } else if (PAGES[pageIndex] === 'RANDOM') {
-        hints = [['Jog', 'page'], ['Up/Dn', 'select'], ['Clk', RANDOM_ACTIONS[randomSel].name]];
+        hints = doorOpen
+            ? ['Jog: sel', `Clk: ${RANDOM_ACTIONS[randomSel].name}`]
+            : ['Jog: page', 'Clk: open', 'K3: dup', 'K4: src'];
     } else if (PAGES[pageIndex] === 'KIT') {
-        hints = [['Jog', 'page'], ['K1', 'pad'], ['K5', 'gain'], ['Up/Dn', 'fav/rej']];
+        hints = ['Jog: page', 'Pad: select', 'K1: gain', 'Up/Dn: fav/rej'];
     } else if (PAGES[pageIndex] === 'SYSTEM') {
-        hints = [['Jog', 'page'], ['Clk', scan ? 'scanning' : 'rescan'], ['K1', 'loop'], ['K2', 'max']];
+        hints = doorOpen
+            ? ['Jog: scroll', 'Clk: close']
+            : ['Jog: page', 'K3: scan', 'Clk: info'];
     } else { // EXPORT
-        hints = [['Jog', 'page'], ['Clk', EXPORT_ROWS[exportSel].id === '__now' ? 'export' : 'toggle']];
+        hints = doorOpen
+            ? [`Clk: ${EXPORT_ROWS[exportSel].id === '__now' ? 'export' : 'toggle'}`, 'Jog: sel']
+            : ['Jog: page', 'Clk: open', 'Up/Dn: sel'];
     }
     drawMenuFooter(hints);
 }
 
+/* RANDOM, door closed: the action list previews inside the door (cells
+ * K1/K2/K5/K6, x0..64); Dup (K3) and Src (K4) are ordinary widgets; Asn/Lck
+ * are a plain readout under them (K7/K8). Door open is drawn by drawUI(). */
 function drawRandomPage() {
-    /* Actions down the left (selected row inverted, step buttons mirror it),
-     * the live controls down the right. Both fit the body without scrolling. */
-    for (let i = 0; i < RANDOM_ACTIONS.length; i++) {
-        const y = BODY_TOP + 2 + i * 7;
+    const doorH = 53 - BODY_TOP;
+    const maxLines = 4;
+    const start = Math.max(0, Math.min(RANDOM_ACTIONS.length - maxLines, randomSel - 1));
+    const preview = [];
+    for (let i = start; i < Math.min(RANDOM_ACTIONS.length, start + maxLines); i++) {
         const label = RANDOM_ACTIONS[i].name + (newArmed > 0 && RANDOM_ACTIONS[i].name === 'New' ? ' ?' : '');
-        if (i === randomSel) {
-            fill_rect(0, y - 1, 64, 7, 1);
-            print(MX, y, clamp(label, 58), 0);
-        } else {
-            print(MX, y, clamp(label, 58), 1);
-        }
+        preview.push((i === randomSel ? '>' : ' ') + label);
     }
-    const rx = 72;
-    line(rx, BODY_TOP + 2,  `Dup ${preventDuplicates ? 'Avoid' : 'Allow'}`);   // knob 1
-    line(rx, BODY_TOP + 11, `Src ${SOURCE_LABEL[sourceMode]}`);                // knob 2
-    line(rx, BODY_TOP + 22, `Asn ${assignedCount()}/16`);
-    line(rx, BODY_TOP + 31, `Lck ${lockedCount()}/16`);
+    drawDoorPreview(0, BODY_TOP, 2 * CELL_W, doorH, 'Actions', preview);
+
+    drawEnumSquare(cellCX(2), BODY_TOP, preventDuplicates ? 'AVOID' : 'ALLOW');
+    centerPrint(cellCX(2), LBL0_Y, 'Dup');
+
+    drawEnumSquare(cellCX(3), BODY_TOP, SOURCE_LABEL[sourceMode].toUpperCase());
+    centerPrint(cellCX(3), LBL0_Y, 'Src');
+
+    /* Value on top, label on bottom — the same order every knob widget uses,
+     * so a plain readout doesn't read as a different kind of thing. Tighter
+     * than LBL1_Y's usual gap on purpose: the pair reads as one unit and
+     * separate from Dup/Src above it, rather than drifting down to meet them. */
+    centerPrint(cellCX(2), ROW1_Y + 3, `${assignedCount()}/16`);
+    centerPrint(cellCX(2), ROW1_Y + 12, 'Asn');
+    centerPrint(cellCX(3), ROW1_Y + 3, `${lockedCount()}/16`);
+    centerPrint(cellCX(3), ROW1_Y + 12, 'Lck');
 }
 
-/* KIT is a per-pad detail view, not a list — bespoke body inside the shared
- * chrome. Rows at 8px from BODY_TOP. */
+/* KIT — Gain is the one knob (K1); pressing a pad selects it directly, so
+ * cell 2 is just a "which pad" readout, no knob of its own. K3/K4 carry a
+ * readout (the sample's fav/reject standing normally, the sequencer's own
+ * status while editing); row 2 is the pool and, in the inverted-pill style,
+ * the sample name. No lock indicator — the pad LED already carries it. */
 function drawKitPage() {
     const p = kit.pads[selectedPad];
     const gain = (p.playback && p.playback.gain != null) ? p.playback.gain : 1;
     const pool = padPool(p.pad, config);
-    const R = (i) => BODY_TOP + 2 + i * 9;   // rows 12, 21, 30, 39, 48
 
-    line(MX, R(0), `Pad ${p.pad}`);
+    /* No Pad-select knob — pressing a pad already selects it (onPadPress), so
+     * a knob doing the same thing would be a second control for one action.
+     * Gain takes the freed knob 1 / cell 1 seat; its value is a peek (a short
+     * overlay while the knob turns, see KNOB1 below), same as a plain schwung
+     * knob — the cell itself only ever shows the label. */
+    drawKnob(cellCX(0), BODY_TOP, Math.max(0, Math.min(1, gain / 2)));
+    centerPrint(cellCX(0), LBL0_Y, 'Gain');
+
+    centerPrint(cellCX(1), BODY_TOP + 4, String(p.pad));
+    centerPrint(cellCX(1), LBL0_Y, 'Pad');
+
+    const rx = 2 * CELL_W + 4;
     if (seqMode) {
         let n = 0, m = seqPattern[selectedPad];
         while (m) { n += m & 1; m >>= 1; }
-        line(72, R(0), `SEQ ${n}st ${seqRunning ? '>' + (seqStep + 1) : '-'}`);
+        line(rx, BODY_TOP + 2,  `Seq: ${n} step${n === 1 ? '' : 's'}`);
+        line(rx, BODY_TOP + 11, seqRunning ? `Playing - step ${seqStep + 1}` : 'Stopped');
     } else {
-        line(MX + 88, R(0), `R${rejects.size} F${favourites.size}`);
+        let standing = '-';
+        if (p.sample) {
+            const fp = p.sample.filesystem_path;
+            standing = favourites.has(fp) ? 'FAV' : rejects.has(fp) ? 'REJ' : '-';
+        }
+        line(rx, BODY_TOP + 2,  `Sample: ${standing}`);
+        line(rx, BODY_TOP + 11, `R${rejects.size} F${favourites.size}`);
     }
-    line(MX, R(1), `Pool  ${pool.join('/')}`);
-    line(MX, R(2), `Lock ${p.locked ? 'yes' : 'no'}     Gain ${gainToDbLabel(gain)}`);
+
+    line(MX, ROW1_Y + 2, `Pool  ${pool.join('/')}`);
     if (p.sample) {
-        const fp = p.sample.filesystem_path;
-        if (favourites.has(fp)) line(MX + 92, R(1), 'FAV');
-        else if (rejects.has(fp)) line(MX + 92, R(1), 'REJ');
-        const cat = p.sample.category;
-        const inPool = cat && pool.indexOf(cat) !== -1;
-        line(MX, R(3), inPool ? `Category  ${cat}` : `Drawn from  ${cat}`);
         const st = slotStat.charAt(selectedPad);
         const tag = st === 'm' ? '(missing) ' : st === 'x' ? '(bad file) ' : st === '.' ? '(loading) ' : '';
-        line(MX, R(4), tag + p.sample.filename);
+        drawInvertedPill(MX, ROW1_Y + 10, RX - MX, tag + p.sample.filename);
     } else {
-        line(MX, R(3), 'Sample  -  (empty pad)');
-        line(MX, R(4), 'hold pad + Assign to fill');
+        line(MX, ROW1_Y + 12, 'empty - hold pad + Assign');
     }
 }
 
-/* SYSTEM page — index report, everything on screen at once. Knob 1 = loop
- * filter, knob 2 = size cap (top row). Jog-press = Rescan. */
+/* SYSTEM — Loop (K1) and Max size (K2) are enum squares; Rescan sits at K5
+ * (row 2) so the whole right half (K3/K4/K7/K8) is free for the info door.
+ * Turning K3 fires Rescan regardless of where its widget is drawn — the
+ * label says so, because that decoupling isn't otherwise guessable. */
 function drawSystemPage() {
-    const s = indexSummary;
-    line(MX, BODY_TOP + 2,  `Loop ${scanPrefs.skip_loops ? 'skip' : 'keep'}`);
-    line(70, BODY_TOP + 2,  `Max ${scanSizeLabel()}`);
-    line(MX, BODY_TOP + 11, `Idx ${s.indexed}`);
-    line(70, BODY_TOP + 11, `Cut ${s.skippedLoops || 0}L ${s.skippedOversize || 0}B`);
+    drawEnumSquare(cellCX(0), BODY_TOP, scanPrefs.skip_loops ? 'SKIP' : 'KEEP');
+    centerPrint(cellCX(0), LBL0_Y, 'Loop');
 
-    const grid = [
-        ['Kck', s.kick], ['Snr', s.snare], ['Clp', s.clap],
-        ['Hat', s.hats], ['Tom', s.toms],  ['Prc', s.perc],
-        ['Cym', s.cym],  ['FX', s.fx],     ['Oth', s.other]
-    ];
-    for (let i = 0; i < grid.length; i++) {
-        const col = i % 3, row = (i / 3) | 0;
-        line(MX + col * 40, BODY_TOP + 24 + row * 9, `${grid[i][0]} ${grid[i][1]}`);
+    drawEnumSquare(cellCX(1), BODY_TOP, scanSizeLabel().toUpperCase());
+    /* Stacked, not "Max size" side by side — two words at once overflows a
+     * 32px cell into its neighbours. */
+    centerPrint(cellCX(1), LBL0_Y,     'Max');
+    centerPrint(cellCX(1), LBL0_Y + 8, 'size');
+
+    drawTrigger(cellCX(0), ROW1_Y, !!scan);
+    centerPrint(cellCX(0), LBL1_Y, 'Scan');   // fired by K3 — see the footer hint
+
+    const rows = systemInfoRows();
+    const preview = rows.slice(0, 4).map((r) => `${r.label} ${r.value}`);
+    drawDoorPreview(2 * CELL_W, BODY_TOP, 2 * CELL_W, 53 - BODY_TOP, 'Index', preview);
+}
+
+/* EXPORT — checkbox on the left, the format's name beside it; Export now
+ * drops the checkbox for a pill, so it reads as an action, not a toggle. */
+/* The rows themselves — checkbox + label, Export now as a pill with no
+ * checkbox — shared by the door closed (condensed, framed) and open (full
+ * width, no frame) renders; only the geometry differs between the two. */
+function drawExportRows(x0, y0, rowH, rightEdge) {
+    let y = y0;
+    for (let i = 0; i < EXPORT_ROWS.length; i++) {
+        const row = EXPORT_ROWS[i];
+        const sel = i === exportSel;
+        if (row.id === '__now') {
+            const w = tw(row.label) + 10;
+            if (sel) fill_rect(x0, y - 1, w, 9, 1); else frameRect(x0, y - 1, w, 9);
+            notchCorners(x0, y - 1, w, 9);
+            print(x0 + 5, y, row.label, sel ? 0 : 1);
+        } else {
+            const hlX = Math.max(0, x0 - 2);
+            if (sel) fill_rect(hlX, y - 1, rightEdge - hlX + 2, 9, 1);
+            drawCheckbox(x0, y, !!exportPrefs[row.id], sel);
+            print(x0 + 9, y, clamp(row.label, rightEdge - (x0 + 9)), sel ? 0 : 1);
+        }
+        y += rowH;
     }
 }
 
+/* EXPORT, door closed: nothing else uses these knobs, so the whole body is
+ * one door — rows condensed to fit inside the frame. Door open (drawUI)
+ * drops the frame and gives the same rows the full width. */
 function drawExportPage() {
-    drawMenuList({
-        items: EXPORT_ROWS,
-        selectedIndex: exportSel,
-        getLabel: (r) => r.label,
-        getValue: (r) => (r.id === '__now' ? '' : (exportPrefs[r.id] ? 'on' : 'off')),
-        listArea: { topY: BODY_TOP, bottomY: BODY_BOTTOM }
-    });
+    drawDoorFrame(0, BODY_TOP, 128, 53 - BODY_TOP);
+    drawExportRows(8, BODY_TOP + 4, 10, 118);
 }
 
 /* Status toast — a shared overlay card. Held ~11 s, then dismissable by any
@@ -1313,12 +1687,38 @@ function toastActive() {
 function drawUI() {
     clear_screen();
     drawHeader();
-    if (seqMode) drawKitPage();
-    else switch (PAGES[pageIndex]) {
-        case 'RANDOM': drawRandomPage(); break;
-        case 'KIT':    drawKitPage();    break;
-        case 'SYSTEM': drawSystemPage(); break;
-        case 'EXPORT': drawExportPage(); break;
+    if (seqMode) {
+        drawKitPage();
+    } else if (doorOpen && PAGES[pageIndex] === 'RANDOM') {
+        /* The door open, full-screen: the shared list widget every other menu
+         * in schwung uses, so scrolling and firing look like the rest of the
+         * fleet, not a bespoke overlay. */
+        drawMenuList({
+            items: RANDOM_ACTIONS,
+            selectedIndex: randomSel,
+            getLabel: (a) => a.name + (newArmed > 0 && a.name === 'New' ? ' ?' : ''),
+            listArea: { topY: BODY_TOP, bottomY: BODY_BOTTOM }
+        });
+    } else if (doorOpen && PAGES[pageIndex] === 'SYSTEM') {
+        drawMenuList({
+            items: systemInfoRows(),
+            selectedIndex: systemInfoSel,
+            getLabel: (r) => r.label,
+            getValue: (r) => r.value,
+            listArea: { topY: BODY_TOP, bottomY: BODY_BOTTOM }
+        });
+    } else if (doorOpen && PAGES[pageIndex] === 'EXPORT') {
+        /* Open: the frame drops away and the same rows get the full width —
+         * checkboxes stay checkboxes rather than switching to the generic
+         * list widget's value column. */
+        drawExportRows(MX, BODY_TOP + 2, 11, RX);
+    } else {
+        switch (PAGES[pageIndex]) {
+            case 'RANDOM': drawRandomPage(); break;
+            case 'KIT':    drawKitPage();    break;
+            case 'SYSTEM': drawSystemPage(); break;
+            case 'EXPORT': drawExportPage(); break;
+        }
     }
     drawPageFooter();
     /* Transient status -> a shared overlay card. `footer` is still set all over
@@ -1342,6 +1742,9 @@ globalThis.init = function () {
     sourceMode = 'user';
     dupKnobTicks = 0;
     srcKnobTicks = 0;
+    doorOpen = false;
+    systemInfoSel = 0;
+    rescanKnobCooldown = 0;
     assignHeld = false;
     assignInFlight = 0;
     assignFireCount = 0;
@@ -1406,9 +1809,13 @@ globalThis.init = function () {
     host_flush_display();
 
     /* Host cleared LEDs before handing us the surface; repaint ours
-     * progressively. */
+     * progressively. resetKnobLedCache too — it's knob_leds.mjs's own cache,
+     * which can outlive an unload/reload within one shadow_ui session. */
     clearAllLEDs();
+    resetKnobLedCache();
     requestFullLedRepaint();
+
+    stopBackgroundTransport();
 
     needsRedraw = true;
 };
@@ -1421,6 +1828,10 @@ globalThis.tick = function () {
 
     /* The Save keyboard draws its own screen and manages its own pad LEDs. */
     if (isTextEntryActive()) { tickTextEntry(); drawTextEntry(); return; }
+
+    /* Knob-ring LEDs: cheap to call every tick — updateKnobLEDs diffs against
+     * its own cache and only emits the knobs that actually changed colour. */
+    updateKnobLEDs(knobLedValues());
 
     if (toastGrace > 0) toastGrace--;
     if (typeof tickOverlay === 'function' && tickOverlay()) needsRedraw = true;   // toast timed out
@@ -1476,6 +1887,13 @@ globalThis.tick = function () {
 
     /* Wind down the Assign in-flight guard (spec §10.7) and the New confirm. */
     if (assignInFlight > 0) assignInFlight--;
+    if (rescanKnobCooldown > 0) rescanKnobCooldown--;
+    if (suppressPlayEcho > 0) suppressPlayEcho--;
+    if (stopTransportRelease > 0 && --stopTransportRelease === 0) {
+        if (typeof move_midi_inject_to_move === 'function') {
+            move_midi_inject_to_move([0x0B, 0xB0, MovePlay, 0]);
+        }
+    }
     if (newArmed > 0 && --newArmed === 0) { footer = 'New cancelled'; needsRedraw = true; }
 
     if (needsRedraw) {
@@ -1497,6 +1915,8 @@ globalThis.onResume = function () {
     heldPad = -1;
     dupKnobTicks = 0;
     srcKnobTicks = 0;
+    doorOpen = false;
+    rescanKnobCooldown = 0;
     footer = 'Resumed';
     refreshIndexView();   /* index age is relative to now */
 
@@ -1515,14 +1935,20 @@ globalThis.onResume = function () {
 
     /* Hardware was cleared while parked. Drop the LED cache so nothing is
      * suppressed, then repaint our whole surface now (not deferred), and
-     * again on the next few frames. */
+     * again on the next few frames. resetKnobLedCache is knob_leds.mjs's own
+     * cache, dropped for the same reason — it survives a ui.js hot-reload
+     * since it lives in the shared module, not in ours. */
     invalidateLedCache();
+    resetKnobLedCache();
     paintAllLeds(true);
     resumePaints = RESUME_PAINT_FRAMES;
     ledInitPending = false;   /* supersede any half-done progressive batch */
 
     clear_screen();
     host_flush_display();
+
+    stopBackgroundTransport();
+
     needsRedraw = true;
 };
 

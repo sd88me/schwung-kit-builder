@@ -2,7 +2,7 @@
     "id": "kit-builder",
     "name": "Kit Builder",
     "abbrev": "KIT",
-    "version": "0.3.1",
+    "version": "1.0.0",
     "description": "Rapidly build, audition and save 16-pad drum kits from the Move User Library",
     "author": "Sam DiDomizio",
     "ui": "ui.js",
