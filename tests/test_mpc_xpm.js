@@ -181,6 +181,51 @@ export const tests = [
         assert(r.errors.join(' ').includes('no assigned pads'));
     }},
 
+    { name: 'frameCount() sets Layer-1 SliceEnd to the real frame count', fn() {
+        const kit = kitWith([[0, 'Kick', 'k.wav'], [1, 'Snare', 'sn.wav']], 'FC Kit');
+        const lengths = { '/data/UserData/UserLibrary/Samples/Kick/k.wav': 33688,
+                           '/data/UserData/UserLibrary/Samples/Snare/sn.wav': 12000 };
+        const { text, warnings } = buildXpm(kit, { frameCount: (p) => lengths[p] || null });
+        eq(warnings.length, 0);
+        const inst1 = text.slice(text.indexOf('<Instrument number="1">'), text.indexOf('<Instrument number="2">'));
+        const inst2 = text.slice(text.indexOf('<Instrument number="2">'), text.indexOf('<Instrument number="3">'));
+        assert(inst1.includes('<SliceEnd>33688</SliceEnd>'), inst1);
+        assert(inst2.includes('<SliceEnd>12000</SliceEnd>'), inst2);
+    }},
+
+    { name: 'no frameCount() supplied -> SliceEnd stays 0, no warning (matches old callers)', fn() {
+        const { text, warnings } = buildXpm(kitWith([[0, 'Kick', 'k.wav']], 'No FC'));
+        eq(warnings.length, 0);
+        const inst1 = text.slice(text.indexOf('<Instrument number="1">'), text.indexOf('<Instrument number="2">'));
+        assert(inst1.includes('<SliceEnd>0</SliceEnd>'), inst1);
+    }},
+
+    { name: 'frameCount() returning null/0 for a pad warns and leaves that pad\'s SliceEnd 0', fn() {
+        const kit = kitWith([[0, 'Kick', 'k.wav'], [1, 'Snare', 'sn.wav']], 'Partial FC');
+        const { text, warnings } = buildXpm(kit, {
+            frameCount: (p) => (p.indexOf('sn.wav') !== -1 ? null : 5000)
+        });
+        assert(warnings.some((w) => w.indexOf('pad 2') !== -1 && w.indexOf('could not read sample length') !== -1), warnings.join('|'));
+        const inst1 = text.slice(text.indexOf('<Instrument number="1">'), text.indexOf('<Instrument number="2">'));
+        const inst2 = text.slice(text.indexOf('<Instrument number="2">'), text.indexOf('<Instrument number="3">'));
+        assert(inst1.includes('<SliceEnd>5000</SliceEnd>'), inst1);
+        assert(inst2.includes('<SliceEnd>0</SliceEnd>'), inst2);
+    }},
+
+    { name: 'exportXpm forwards opts.frameCount through to buildXpm', fn() {
+        const FS = new Map();
+        const kit = kitWith([[0, 'Kick', 'k.wav']], 'RT FC');
+        const r = exportXpm(kit, {
+            dir: '/exp/MPC', name: 'RT FC',
+            write: (p, s) => { FS.set(p, s); return true; },
+            frameCount: () => 4096
+        });
+        assert(r.ok, JSON.stringify(r.errors));
+        const xpm = FS.get('/exp/MPC/RT FC/RT FC.xpm');
+        const inst1 = xpm.slice(xpm.indexOf('<Instrument number="1">'), xpm.indexOf('<Instrument number="2">'));
+        assert(inst1.includes('<SliceEnd>4096</SliceEnd>'), inst1);
+    }},
+
     { name: 'duplicate sample on two pads still yields distinct SampleNames', fn() {
         const { text, manifest } = buildXpm(kitWith([[0, 'Kick', 'boom.wav'], [1, 'Kick', 'boom.wav']], 'Dup'));
         const names = manifest.map((m) => m.sampleName);

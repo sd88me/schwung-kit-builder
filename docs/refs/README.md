@@ -41,3 +41,30 @@ are already there as the native Move `.ablpreset`, so there's no import path for
 it to serve; a kit leaving Move with its samples is Move's native
 `.ablbundle` drum-rack save. No exporter, no reference kept. `wav_strip.mjs`
 survives — it serves the MPC `.xpm` gather.
+
+## Vendored dropbear client (`src/vendor/dropbear-aarch64/`)
+
+`dbclient` / `scp` / `dropbearkey`, static aarch64 binaries — "Send to Force"
+(EXPORT page) pushes a kit over SSH to an Akai Force running MockbaMod. Move
+ships `sshd` + `scp` for *inbound* connections only; there's no outbound `ssh`
+client anywhere on the device (`/usr/bin/scp` execs `/usr/bin/ssh`, which
+doesn't exist — confirmed by running it). host_system_cmd's allowlist
+includes a bare `sh ` prefix, so a bundled client can be invoked; it just has
+to actually exist.
+
+**musl, not glibc.** A `gcc-aarch64-linux-gnu` (glibc) `-static` build of
+`dbclient` segfaults on Move on the very first invocation — no args, no
+network, just `SIGSEGV` (exit 139). This is the well-known glibc-static
+trap: `getaddrinfo`/`getpwnam`/`getpwuid`/`getspnam` still `dlopen()` NSS
+`.so`s at runtime even in a "static" binary (the linker warns about exactly
+this), and that path is broken or absent on Move's stripped runtime. A musl
+build of the same source has no such dependency — musl resolves NSS at link
+time — and it runs cleanly: confirmed on-device, `dropbearkey` generated a
+real ed25519 key on the actual hardware.
+
+Rebuild via `scripts/build_dropbear.sh` (fetches dropbear source + a
+self-contained musl cross toolchain from musl.cc — no Docker needed, unlike
+the DSP build). Not run automatically: unlike `dsp.so`, these binaries don't
+change with kit-builder's own code, so they're committed and only rebuilt by
+hand when bumping `DROPBEAR_VERSION` in that script. Dropbear is MIT-licensed
+(Matt Johnston + contributors) — see `src/vendor/dropbear-aarch64/LICENSE`.

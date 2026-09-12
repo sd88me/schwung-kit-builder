@@ -31,6 +31,8 @@ Akai MPC `.xpm` exporter is available alongside it.
 - **Scan filters** — skip loop-named files and cap sample size at scan time.
 - **Exporters** — native Move drum preset (`.ablpreset`, on by default) and Akai
   MPC `.xpm` with gathered samples (opt-in), toggled on the EXPORT page.
+- **Send to Force** (opt-in, bespoke — see below) — push the MPC export over
+  SSH straight to an Akai Force running MockbaMod.
 - **Session restore** — the working kit is saved on every change and restored on
   next launch; *New* is the way to a blank slate.
 
@@ -137,6 +139,10 @@ scrolls it too, and a **jog press** toggles the highlighted row:
 - **MPC `.xpm`** (off by default) — an Akai MPC program with each assigned
   sample gathered beside it (`MANIFEST.txt` lists anything that couldn't be
   copied).
+- **Send to Force** (off by default) — pushes that same MPC export over SSH to
+  an Akai Force on your LAN. **Bespoke, advanced, opt-in only** — see
+  [Send to Force](#send-to-force-optional--akai-force--mockbamod-only) below
+  before turning it on; the first toggle prompts for the Force's IP.
 - **Export now** — run the enabled formats for the current kit without a Save;
   running it closes the door, but toggling a format above leaves it open so
   you can flip several in a row.
@@ -150,6 +156,61 @@ disarm steps for the pad on **Knob 1**, and a full-screen SEQ readout replaces
 the page. **Play** runs / stops the clock, independent of the view. Tempo
 follows the Move's global BPM. Parking (**Back**) or resuming brings it back
 stopped at step 1 with the pattern intact; **New** clears it.
+
+## Send to Force (optional — Akai Force + MockbaMod only)
+
+The EXPORT page's **Send to Force** row pushes a kit's MPC export straight to
+an [Akai Force](https://www.akaipro.com/force) over your LAN via SSH, landing
+it in a Kits folder the Force can load from. **This is a bespoke feature for
+one specific setup, not a general Force integration** — it only works if:
+
+- your Force is running [MockbaMod](http://mockbatheb.org/). Stock Force
+  firmware has no SSH server at all; MockbaMod's boot enables `sshd`
+  automatically, with default credentials `root` / `force`.
+- the Force is on the same network as the Move, reachable by IP.
+- you've completed the one-time key handoff below.
+
+None of that can be detected automatically. Turning the row on against a
+stock (non-MockbaMod) Force, or one that's unreachable or unpaired, just
+fails that one row cleanly — the rest of the export (and the MPC `.xpm` file
+itself) still succeeds.
+
+Auth is always by an SSH key Kit Builder generates for itself, never a
+password — there's no interactive prompt anywhere on Move to type one into,
+and a key means nothing has to change if MockbaMod's own default password
+ever does.
+
+### One-time setup
+
+1. Boot the Force off its MockbaMod SD card and find its IP (WiFi screen →
+   hold **Shift** → tap **info**).
+2. On Kit Builder's EXPORT page, toggle **Send to Force** on for the first
+   time. It prompts for the Force's IP on the on-screen keyboard and saves it
+   to `KitBuilder/config.json` (`force.host`). There's no on-device flow to
+   change it afterwards — edit that file by hand if the Force's IP changes.
+3. Run any export with Send to Force enabled. This generates Kit Builder's
+   own keypair on first use (`KitBuilder/force_key` / `force_key.pub`) — this
+   first attempt is *expected* to fail with an auth error, since the Force
+   doesn't have the public half yet.
+4. Hand that public key to the Force. The Move itself has no way to reach a
+   *third* machine on your network, so do this from a computer that can SSH
+   to both:
+
+   ```bash
+   ssh ableton@move.local cat \
+     /data/UserData/UserLibrary/KitBuilder/force_key.pub > force_key.pub
+   scp force_key.pub root@<force-ip>:/tmp/
+   ssh root@<force-ip> \
+     'mkdir -p ~/.ssh && cat /tmp/force_key.pub >> ~/.ssh/authorized_keys && rm /tmp/force_key.pub'
+   ```
+
+   (password `force` when prompted for the Force login — MockbaMod's default;
+   change it on the Force itself if you'd rather not rely on it.)
+5. Re-run the export. Kits land in `force.kits_path` from `config.json`,
+   default `/media/662522/Kits` — the typical mount point for a MockbaMod SD
+   card's FAT volume. If kits don't show up where expected, confirm yours
+   with `mount | grep 662522` over SSH on the Force and edit `config.json` if
+   it differs.
 
 ---
 

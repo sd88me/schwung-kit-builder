@@ -3,8 +3,9 @@
 # Build the Kit Builder Schwung module into dist/.
 #
 # Assembles the flat module payload (module.json, ui.js, help.json,
-# kit_config.json, core/*.mjs, exporters/*.mjs, dsp.so) under dist/<id>/ and
-# tars it to dist/<id>-module.tar.gz. SKIP_DSP=1 skips the native build.
+# kit_config.json, core/*.mjs, exporters/*.mjs, dsp.so,
+# vendor/dropbear-aarch64/*) under dist/<id>/ and tars it to
+# dist/<id>-module.tar.gz. SKIP_DSP=1 skips the native build.
 #
 set -euo pipefail
 
@@ -47,6 +48,16 @@ if [ -d "$SRC/exporters" ]; then
     mkdir -p "$OUT/exporters"
     cp "$f" "$OUT/exporters/"
   done
+fi
+
+# Vendored dropbear client ("Send to Force") — committed binaries, not built
+# here; see scripts/build_dropbear.sh + docs/refs/README.md.
+if [ -d "$SRC/vendor/dropbear-aarch64" ]; then
+  mkdir -p "$OUT/vendor/dropbear-aarch64"
+  cp "$SRC"/vendor/dropbear-aarch64/dbclient "$SRC"/vendor/dropbear-aarch64/scp "$SRC"/vendor/dropbear-aarch64/dropbearkey "$OUT/vendor/dropbear-aarch64/"
+  chmod +x "$OUT"/vendor/dropbear-aarch64/*
+  [ -f "$SRC/vendor/dropbear-aarch64/LICENSE" ] && cp "$SRC/vendor/dropbear-aarch64/LICENSE" "$OUT/vendor/dropbear-aarch64/"
+  echo "    included vendor/dropbear-aarch64 (dbclient, scp, dropbearkey)"
 fi
 
 # Audition-player DSP (Stage 4). Build it unless SKIP_DSP=1; a stale/missing

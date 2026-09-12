@@ -10,6 +10,7 @@ import * as os from 'os';
 import { KB_DIR, CONFIG_PATH } from './sample_index.mjs';
 import { validateKit } from './validation.mjs';
 import { stripWavString, isWavName } from './wav_strip.mjs';
+import { wavFrameCount, base64Decode } from './wav_info.mjs';
 import { exportKit as buildAndWriteExport } from '../exporters/mrdrums_json.mjs';
 import { exportXpm as buildAndWriteXpm, MPC_EXPORT_ROOT } from '../exporters/mpc_xpm.mjs';
 
@@ -22,9 +23,9 @@ export const MRDRUMS_EXPORT_DIR = '/data/UserData/UserLibrary/Track Presets';
 
 /* Which exporters a Save runs. Persisted in config.json under `exports`
  * (alongside next_kit_number). The Move drum preset (.ablpreset) is on by
- * default; the MPC .xpm is opt-in. Batch D. */
-export const EXPORT_IDS = ['mrdrums', 'mpcxpm'];
-const EXPORT_DEFAULTS = { mrdrums: true, mpcxpm: false };
+ * default; the MPC .xpm and the Force push are opt-in. Batch D (+ Force push). */
+export const EXPORT_IDS = ['mrdrums', 'mpcxpm', 'force'];
+const EXPORT_DEFAULTS = { mrdrums: true, mpcxpm: false, force: false };
 
 export function loadExportPrefs() {
     const e = readRawConfig().exports;
@@ -60,6 +61,28 @@ export function loadScanPrefs() {
 export function saveScanPrefs(prefs) {
     const cfg = readRawConfig();
     cfg.scan_filters = Object.assign({}, SCAN_FILTER_DEFAULTS, cfg.scan_filters, prefs || {});
+    hMkdir(KB_DIR);
+    return writeJsonAtomic(CONFIG_PATH, cfg);
+}
+
+/* "Send to Force": push the exported MPC kit to an Akai Force running
+ * MockbaMod over SSH. Persisted in config.json under `force` — host and
+ * kits_path are Sam's own setup, there's no way to discover either
+ * automatically. kits_path default matches the FAT volume MockbaMod mounts
+ * SD-card content under. */
+const FORCE_DEFAULTS = { host: '', kits_path: '/media/662522/Kits' };
+
+export function loadForcePrefs() {
+    const f = readRawConfig().force || {};
+    return {
+        host: typeof f.host === 'string' ? f.host : FORCE_DEFAULTS.host,
+        kits_path: (typeof f.kits_path === 'string' && f.kits_path) ? f.kits_path : FORCE_DEFAULTS.kits_path
+    };
+}
+
+export function saveForcePrefs(prefs) {
+    const cfg = readRawConfig();
+    cfg.force = Object.assign({}, FORCE_DEFAULTS, cfg.force, prefs || {});
     hMkdir(KB_DIR);
     return writeJsonAtomic(CONFIG_PATH, cfg);
 }
@@ -279,6 +302,21 @@ export function exportMrDrums(kit, name) {
     });
 }
 
+/* Real frame count for a pad's source WAV, for the .xpm's Layer-1 SliceEnd —
+ * SliceStart 0 + SliceEnd 0 is a zero-length region (confirmed silent on a
+ * real Akai Force). MUST read via host_read_file_base64, not host_read_file:
+ * the latter feeds raw bytes through QuickJS's JS_NewString, which decodes
+ * them as UTF-8 and corrupts arbitrary audio data; base64 is pure ASCII and
+ * survives that round-trip intact. null (not 0) on anything unreadable/not a
+ * WAV we understand, so the caller can tell "empty" from "couldn't measure". */
+function sampleFrameCount(path) {
+    if (typeof host_read_file_base64 !== 'function') return null;
+    let b64;
+    try { b64 = host_read_file_base64(path); } catch (e) { return null; }
+    if (!b64) return null;
+    try { return wavFrameCount(base64Decode(b64)); } catch (e) { return null; }
+}
+
 /* MPC .xpm export (Batch D3). Writes <Root>/<Kit>/<Kit>.xpm + MANIFEST.txt and
  * gathers each sample beside the .xpm (hCopy). Any copy that fails is tagged
  * [MISSING] in MANIFEST.txt for a manual step. */
@@ -289,17 +327,110 @@ export function exportMpcXpm(kit, name) {
         name: name || kit.name || 'Kit Builder',
         mkdir: (p) => hMkdir(p),
         write: (p, s) => hWrite(p, s),
-        copy: (src, dest) => hCopy(src, dest)
+        copy: (src, dest) => hCopy(src, dest),
+        frameCount: (p) => sampleFrameCount(p)
     });
 }
 
+/* ---- Send to Force (SSH push to an Akai Force running MockbaMod) -------
+ *
+ * Move ships sshd for *inbound* connections only — there's no outbound ssh
+ * anywhere on the device (`/usr/bin/scp` execs a nonexistent `/usr/bin/ssh`;
+ * confirmed by running it). src/vendor/dropbear-aarch64/ vendors a static
+ * musl build of dropbear's dbclient/scp/dropbearkey instead — see
+ * docs/refs/README.md for why it has to be musl, not glibc (a glibc-static
+ * dbclient segfaults on Move on the very first invocation).
+ *
+ * Auth is an ed25519 keypair Kit Builder generates for itself once, never a
+ * password: no interactive prompt is possible from this environment, and a
+ * key means nothing has to change if MockbaMod's own default password ever
+ * does. The matching public key still has to reach the Force by hand, once
+ * — there's no keyboard-free way to hand it over automatically the first
+ * time (see README's Force setup section for the one SSH command that
+ * does it).
+ */
+const MODULE_DIR = '/data/UserData/schwung/modules/overtake/kit-builder';
+const FORCE_BIN = MODULE_DIR + '/vendor/dropbear-aarch64';
+export const FORCE_DBCLIENT = FORCE_BIN + '/dbclient';
+export const FORCE_SCP = FORCE_BIN + '/scp';
+const FORCE_DROPBEARKEY = FORCE_BIN + '/dropbearkey';
+export const FORCE_KEY_PATH = KB_DIR + '/force_key';
+
+/* Generate the keypair on first use; a no-op once it exists. Returns false
+ * only if generation itself failed (host_system_cmd missing, or dropbearkey
+ * exited non-zero) — an already-existing key is success, not skipped work. */
+export function ensureForceKey() {
+    if (hExists(FORCE_KEY_PATH)) return true;
+    if (typeof host_system_cmd !== 'function') return false;
+    hMkdir(KB_DIR);
+    const real = FORCE_DROPBEARKEY + ' -t ed25519 -f ' + shq(FORCE_KEY_PATH) + ' -C kit-builder@move';
+    host_system_cmd('sh -c ' + shq(real));
+    return hExists(FORCE_KEY_PATH);
+}
+
+/* The public half, for the one-time copy onto the Force's authorized_keys.
+ * null if no key has been generated yet (call ensureForceKey() first). */
+export function readForcePublicKey() {
+    if (!hExists(FORCE_KEY_PATH + '.pub')) return null;
+    const raw = hRead(FORCE_KEY_PATH + '.pub');
+    return raw ? raw.trim() : null;
+}
+
+/* Push `dir` (an already-exported MPC kit folder — .xpm + gathered samples)
+ * to <force.kits_path>/<basename(dir)> on the Force. `-o StrictHostKeyChecking
+ * =no` because there's no interactive prompt to confirm a host key from, and
+ * no known_hosts management this environment can reasonably do; the Force is
+ * assumed to be Sam's own, addressed by IP on his own LAN. -S points scp at
+ * the vendored dbclient explicitly — dropbear's scp defaults to invoking
+ * /usr/bin/dbclient by its compiled-in path, which doesn't exist here. */
+export function pushKitToForce(dir, name) {
+    const prefs = loadForcePrefs();
+    if (!prefs.host) return { ok: false, error: 'no Force address set' };
+    if (typeof host_system_cmd !== 'function') return { ok: false, error: 'host_system_cmd unavailable' };
+    if (!ensureForceKey()) return { ok: false, error: 'key generation failed' };
+    /* hExists() is a stat() — true even if the file can't actually be read.
+     * shadow_ui runs this as `ableton`; a key that ended up root-owned (e.g.
+     * from someone generating it by hand over an ssh root login instead of
+     * through this function) exists but isn't readable, and dbclient would
+     * just fail auth silently. Catch that here with a clear reason instead
+     * of a bare "scp exited N" — this exact failure happened once already. */
+    if (hRead(FORCE_KEY_PATH) == null) {
+        return { ok: false, error: 'key exists but is unreadable — check its owner/permissions' };
+    }
+
+    const remote = prefs.kits_path + '/';
+    const real = FORCE_SCP + ' -r -S ' + FORCE_DBCLIENT +
+        ' -i ' + shq(FORCE_KEY_PATH) +
+        ' -o StrictHostKeyChecking=no -o BatchMode=yes ' +
+        shq(dir) + ' ' + shq('root@' + prefs.host + ':' + remote);
+    const rc = host_system_cmd('sh -c ' + shq(real));
+    return rc === 0
+        ? { ok: true, path: prefs.kits_path + '/' + name }
+        : { ok: false, error: `scp exited ${rc}` };
+}
+
 /* Run every enabled exporter for `kit`. Returns [{ id, ok, path, warnings,
- * errors }]. Order: mrdrums, mpcxpm. */
+ * errors }]. Order: mrdrums, mpcxpm, force. Force implies an MPC export even
+ * if that toggle itself is off — there's nothing to push otherwise — but
+ * only reports an `mpcxpm` row if the user actually asked for one. */
 export function runExports(kit, name, prefs) {
     prefs = prefs || loadExportPrefs();
     const out = [];
     if (prefs.mrdrums) { const r = exportMrDrums(kit, name); out.push({ id: 'mrdrums', ok: r.ok, path: r.path, warnings: r.warnings || [], errors: r.errors || [] }); }
-    if (prefs.mpcxpm)  { const r = exportMpcXpm(kit, name);  out.push({ id: 'mpcxpm',  ok: r.ok, path: r.path, warnings: r.warnings || [], errors: r.errors || [] }); }
+
+    let xpm = null;
+    if (prefs.mpcxpm || prefs.force) {
+        xpm = exportMpcXpm(kit, name);
+        if (prefs.mpcxpm) out.push({ id: 'mpcxpm', ok: xpm.ok, path: xpm.path, warnings: xpm.warnings || [], errors: xpm.errors || [] });
+    }
+    if (prefs.force) {
+        if (xpm && xpm.ok) {
+            const r = pushKitToForce(xpm.dir, name || kit.name || 'Kit Builder');
+            out.push({ id: 'force', ok: r.ok, path: r.path || '', warnings: [], errors: r.ok ? [] : [r.error] });
+        } else {
+            out.push({ id: 'force', ok: false, path: '', warnings: [], errors: ['MPC export failed — nothing to send'] });
+        }
+    }
     return out;
 }
 

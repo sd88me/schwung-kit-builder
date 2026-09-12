@@ -1,9 +1,9 @@
 {
   "id": "kit-builder",
   "name": "Kit Builder",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "component_type": "overtake",
   "stage": "stable",
-  "download_url": "https://github.com/sd88me/schwung-kit-builder/releases/download/v1.0.1/kit-builder-module.tar.gz",
-  "notes": "v1.0.1 — fix: a track playing elsewhere could still trigger Kit Builder's pads while it was merely parked (Back), not actually exited — suspend_keeps_js keeps its DSP loaded and wired to Move's internal pad-note stream the whole time. Kit Builder now mutes its own DSP the moment it's parked and unmutes on resume; parking is still instant, nothing can sound until you're looking at it again. Builds on v1.0.0's knob-grid redesign — see CHANGELOG.md for the full list."
+  "download_url": "https://github.com/sd88me/schwung-kit-builder/releases/download/v1.1.0/kit-builder-module.tar.gz",
+  "notes": "v1.1.0 — new: Send to Force (EXPORT page, off by default) pushes the MPC .xpm export over SSH to an Akai Force running MockbaMod — bespoke, opt-in, see README for the one-time key setup. Fix: MPC .xpm exports played silent on any sampler that honors SliceEnd (including the Force above) — every pad's SliceEnd was hardcoded to 0; the exporter now reads each sample's real WAV frame count. Existing exports need re-exporting to pick up the fix. See CHANGELOG.md for details."
 }

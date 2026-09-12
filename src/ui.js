@@ -115,7 +115,8 @@ import { assignKit, rerollPad, randomSeed } from './core/random_assign.mjs';
 import {
     saveKit, saveCurrentKit, loadCurrentKit, markMissingSamples, exportMrDrums,
     generatedKitName, nextKitNumber, commitKitNumber, loadPrefs, savePrefs,
-    runExports, loadExportPrefs, saveExportPrefs, loadScanPrefs, saveScanPrefs
+    runExports, loadExportPrefs, saveExportPrefs, loadScanPrefs, saveScanPrefs,
+    loadForcePrefs, saveForcePrefs
 } from './core/storage.mjs';
 
 import {
@@ -128,7 +129,7 @@ import {
  * ------------------------------------------------------------------ */
 
 const MODULE_TAG = 'kit-builder';
-const VERSION = '1.0.1';
+const VERSION = '1.1.0';
 const PAD_COUNT = 16;
 
 /* Kit Builder pad 1..16 -> hardware pad note.
@@ -172,6 +173,7 @@ const PAGES = ['RANDOM', 'KIT', 'SYSTEM', 'EXPORT'];
 const EXPORT_ROWS = [
     { id: 'mrdrums', label: 'Move preset .ablpreset' },
     { id: 'mpcxpm',  label: 'MPC .xpm' },
+    { id: 'force',   label: 'Send to Force' },
     { id: '__now',   label: 'Export now' }
 ];
 
@@ -684,7 +686,7 @@ function fireSave() {
                     footer = `Saved; ${failed.map((r) => r.id).join('+')} export failed`;   // §17.3
                 }
                 console.log(`${MODULE_TAG}: saved ${res.path}; exports ` +
-                    ex.map((r) => `${r.id}:${r.ok ? 'ok' : 'FAIL'}`).join(' '));
+                    ex.map((r) => r.ok ? `${r.id}:ok` : `${r.id}:FAIL(${(r.errors || []).join('; ') || '?'})`).join(' '));
             } else {
                 footer = `Save failed: ${res.error}`;   // §17.3
                 console.log(`${MODULE_TAG}: save failed — ${res.error}`);
@@ -938,6 +940,35 @@ function fireExportAction() {
     const row = EXPORT_ROWS[exportSel];
     if (!row) return;
 
+    /* Turning Force on for the first time: it means nothing without an
+     * address, and there's no keyboard-free way to ask, so ask now — the
+     * same on-screen keyboard Save uses. An address already on file just
+     * toggles normally; changing it later is a config.json edit (see
+     * README) rather than a second on-device flow for something this rare. */
+    if (row.id === 'force' && !exportPrefs.force && !loadForcePrefs().host) {
+        dspSet('mute', '1');
+        openTextEntry({
+            title: 'Force IP address',
+            initialText: '',
+            padSelect: true,
+            onConfirm: (text) => {
+                const host = (text || '').trim();
+                if (host) {
+                    saveForcePrefs({ host });
+                    exportPrefs.force = true;
+                    saveExportPrefs(exportPrefs);
+                    footer = `Force: ${host}`;
+                } else {
+                    footer = 'Force needs an IP — left off';
+                }
+                afterTextEntry();
+            },
+            onCancel: () => { footer = 'Force: left off'; afterTextEntry(); }
+        });
+        needsRedraw = true;
+        return;
+    }
+
     if (row.id !== '__now') {
         exportPrefs[row.id] = !exportPrefs[row.id];
         saveExportPrefs(exportPrefs);
@@ -959,7 +990,8 @@ function fireExportAction() {
     footer = failed.length
         ? `Exported ${res.length - failed.length}/${res.length} — ${failed.map((r) => r.id).join('+')} failed`
         : `Exported ${res.length} type${res.length > 1 ? 's' : ''}${warns ? ` (${warns} warn)` : ''}`;
-    console.log(`${MODULE_TAG}: export now "${name}" — ` + res.map((r) => `${r.id}:${r.ok ? 'ok' : 'FAIL'}`).join(' '));
+    console.log(`${MODULE_TAG}: export now "${name}" — ` +
+        res.map((r) => r.ok ? `${r.id}:ok` : `${r.id}:FAIL(${(r.errors || []).join('; ') || '?'})`).join(' '));
     needsRedraw = true;
 }
 
@@ -1675,7 +1707,7 @@ function drawExportRows(x0, y0, rowH, rightEdge) {
  * drops the frame and gives the same rows the full width. */
 function drawExportPage() {
     drawDoorFrame(0, BODY_TOP, 128, 53 - BODY_TOP);
-    drawExportRows(8, BODY_TOP + 4, 10, 118);
+    drawExportRows(8, BODY_TOP + 3, 9, 118);   // 4 rows now (Send to Force) — tightened to fit
 }
 
 /* Status toast — a shared overlay card. Held ~11 s, then dismissable by any
@@ -1723,7 +1755,7 @@ function drawUI() {
         /* Open: the frame drops away and the same rows get the full width —
          * checkboxes stay checkboxes rather than switching to the generic
          * list widget's value column. */
-        drawExportRows(MX, BODY_TOP + 2, 11, RX);
+        drawExportRows(MX, BODY_TOP + 2, 10, RX);   // 4 rows now (Send to Force)
     } else {
         switch (PAGES[pageIndex]) {
             case 'RANDOM': drawRandomPage(); break;

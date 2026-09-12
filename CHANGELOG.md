@@ -2,6 +2,33 @@
 
 All notable changes to Kit Builder are recorded here.
 
+## [1.1.0] — 2026-09-12
+
+New: **Send to Force** — pushes the MPC `.xpm` export over SSH straight to an
+Akai Force running MockbaMod. Fix: MPC `.xpm` exports played silent on every
+sampler that respects `SliceEnd` (including the Force above).
+
+- **Send to Force** (EXPORT page, off by default) — a fourth export row next
+  to Move preset / MPC `.xpm`. **Bespoke and opt-in**: it only does anything
+  useful if you're running an Akai Force on MockbaMod on the same network —
+  see the README's "Send to Force" section for the required one-time key
+  setup. Auth is an ed25519 keypair Kit Builder generates for itself (never a
+  password — there's no interactive prompt anywhere in this environment to
+  type one into); the vendored SSH client (`src/vendor/dropbear-aarch64/`) is
+  a musl-static build of dropbear, since Move ships `sshd` for inbound
+  connections only and has no outbound `ssh` client of its own.
+- **Fix: MPC `.xpm` exports were silent on hardware that honors `SliceEnd`.**
+  Every populated pad's Layer-1 `<SliceEnd>` was hardcoded to `0`; with
+  `SliceStart` also `0`, that's a zero-length playback region — confirmed
+  silent on a real Akai Force. The exporter now reads each sample's actual
+  WAV header (via the one binary-safe host read, `host_read_file_base64` —
+  the plain `host_read_file` decodes bytes as UTF-8 and corrupts audio data)
+  and writes its real frame count. A sample whose length can't be determined
+  now gets an explicit warning instead of failing silently. Existing exports
+  made before this fix need re-exporting to pick up real slice lengths.
+- Export/save failures now log the actual error message, not just which
+  exporter failed — this is what surfaced the two issues above.
+
 ## [1.0.1] — 2026-09-11
 
 Fix: a track playing elsewhere could still trigger Kit Builder's pads while

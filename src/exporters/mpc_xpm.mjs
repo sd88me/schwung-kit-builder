@@ -18,10 +18,14 @@
  * folder. When the caller supplies copy(src, dest) the export gathers each
  * source file into that folder as `<SampleName><ext>`; otherwise (and for any
  * copy that fails) MANIFEST.txt lists what to place by hand.
- * `<SliceEnd>` is left 0 (whole-sample one-shot, as the template's unused
- * layers are) — revisit if an MPC truncates playback.
+ * `<SliceEnd>` must be the sample's real frame count — SliceStart 0 + SliceEnd
+ * 0 is a zero-length region, so leaving it at the reference layer's inert `0`
+ * played silence on a real Akai Force (confirmed on hardware). When the
+ * caller supplies frameCount(sourcePath), it's used for every assigned pad;
+ * a pad whose length can't be determined keeps SliceEnd 0 and gets a warning.
  *
- * Pure module: no os / host_*. Caller supplies write()/mkdir()/copy().
+ * Pure module: no os / host_*. Caller supplies write()/mkdir()/copy()/
+ * frameCount().
  */
 
 import {
@@ -61,11 +65,12 @@ export function mpcSampleName(filename) {
 /* One <Instrument number="n"> block. `sampleName` '' => empty pad, which in a
  * real MPC export differs from a populated pad by two inert defaults
  * (WarpTempo 120 vs 20, Layer-1 SliceLoopCrossFadeLength -1 vs 0) — matched
- * here so the file is byte-identical in shape to the reference. */
-function instrumentBlock(n, sampleName) {
+ * here so the file is byte-identical in shape to the reference. `sliceEnd`
+ * is the pad's real frame count (0 if unknown/empty — see module doc). */
+function instrumentBlock(n, sampleName, sliceEnd) {
     let b = XPM_INSTRUMENT.replace('<Instrument number="1">', `<Instrument number="${n}">`);
     b = b.replace(XPM_SAMPLENAME_MARK, `<SampleName>${xmlEscape(sampleName)}</SampleName>`);
-    b = b.replace(XPM_SLICEEND_MARK, '<SliceEnd>0</SliceEnd>');
+    b = b.replace(XPM_SLICEEND_MARK, `<SliceEnd>${sliceEnd | 0}</SliceEnd>`);
     if (!sampleName) {
         b = b.replace('<WarpTempo>20.000000</WarpTempo>', '<WarpTempo>120.000000</WarpTempo>');
         b = b.replace('<SliceLoopCrossFadeLength>0</SliceLoopCrossFadeLength>',
@@ -93,12 +98,15 @@ function padGroupMap() {
 }
 
 /*
- * buildXpm(kit) -> { text, warnings, padCount, manifest }
+ * buildXpm(kit, opts) -> { text, warnings, padCount, manifest }
  * `manifest` is [{ pad, sampleName, sourcePath, ext, destName }] for the
  * assigned pads. destName = sampleName + source ext — the file the MPC wants
- * sitting next to the .xpm.
+ * sitting next to the .xpm. `opts.frameCount(sourcePath) -> number|null` is
+ * called once per assigned pad to fill in Layer 1's <SliceEnd>; omit it (or
+ * return null/0) and that pad's SliceEnd stays 0, with a warning.
  */
-export function buildXpm(kit) {
+export function buildXpm(kit, opts) {
+    const frameCount = (opts && typeof opts.frameCount === 'function') ? opts.frameCount : null;
     const warnings = [];
     const name = (kit && kit.name) || 'Kit Builder';
     const pads = (kit && kit.pads) || [];
@@ -108,6 +116,7 @@ export function buildXpm(kit) {
     const instrs = [];
     for (let n = 1; n <= N_INSTR; n++) {
         let sn = '';
+        let sliceEnd = 0;
         if (n <= KIT_PADS) {
             const p = pads[n - 1];
             if (p && p.sample && p.sample.filesystem_path) {
@@ -119,9 +128,15 @@ export function buildXpm(kit) {
                 const dot = fs.lastIndexOf('.');
                 const ext = dot > fs.lastIndexOf('/') ? fs.slice(dot).toLowerCase() : '.wav';
                 manifest.push({ pad: n, sampleName: sn, sourcePath: fs, ext, destName: sn + ext });
+
+                if (frameCount) {
+                    const frames = frameCount(fs);
+                    if (frames > 0) sliceEnd = frames;
+                    else warnings.push(`pad ${n}: could not read sample length — may play silent on some MPC/Force firmware`);
+                }
             }
         }
-        instrs.push(instrumentBlock(n, sn));
+        instrs.push(instrumentBlock(n, sn, sliceEnd));
     }
 
     const progName = `    <ProgramName>${xmlEscape(name)}</ProgramName>\n`;
@@ -153,18 +168,20 @@ export function manifestText(manifest, opts) {
 }
 
 /*
- * exportXpm(kit, { dir, name, write, mkdir, copy }) -> { ok, path, dir, warnings, errors, padCount, gathered }
+ * exportXpm(kit, { dir, name, write, mkdir, copy, frameCount }) ->
+ *     { ok, path, dir, warnings, errors, padCount, gathered }
  *   write(path, string) -> boolean        (required)
  *   mkdir(path)                           (optional)
  *   copy(srcPath, destPath) -> boolean    (optional) — gather the WAVs beside
  *       the .xpm; a falsy return leaves that sample for MANIFEST.txt
+ *   frameCount(srcPath) -> number|null    (optional) — see buildXpm() doc
  * `gathered` is the count of samples copied in. Never throws.
  */
 export function exportXpm(kit, opts) {
     opts = opts || {};
     if (!kit || !Array.isArray(kit.pads)) return { ok: false, errors: ['no kit'], warnings: [] };
 
-    const { text, warnings, padCount, manifest } = buildXpm(kit);
+    const { text, warnings, padCount, manifest } = buildXpm(kit, opts);
     if (padCount === 0) return { ok: false, errors: ['kit has no assigned pads'], warnings };
 
     const base = String(opts.name || kit.name || 'Kit Builder').replace(/[\/\\]/g, '_');
